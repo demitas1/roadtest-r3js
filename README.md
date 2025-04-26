@@ -18,9 +18,16 @@ threejs-react19-boilerplate/
 │   └── style.css
 ```
 
+## Setup
+
+```
+npm install
+```
+
 ## Run
 
 ```
+npm run dev
 ```
 
 ## License
