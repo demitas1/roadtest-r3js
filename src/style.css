@@ -15,9 +15,44 @@ html, body {
   height: 100%;
 }
 
+/* App container layout */
+.app-container {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+/* Scene container styling */
 .scene-container {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
+  width: 1024px;
+  height: 768px;
+  position: relative;
+}
+
+/* Controls panel styling */
+.controls-panel {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Button styling */
+.control-button {
+  padding: 10px 20px;
+  font-size: 16px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.3s ease;
+}
+
+.control-button:hover {
+  background-color: #45a049;
+}
+
+.control-button:active {
+  background-color: #3e8e41;
 }

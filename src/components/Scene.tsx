@@ -7,7 +7,7 @@ const Scene = () => {
   useEffect(() => {
     if (!mountRef.current) return
     
-    // delete childrens of mountRef
+    // delete children of mountRef
     while (mountRef.current.firstChild) {
       mountRef.current.removeChild(mountRef.current.firstChild)
     }
@@ -19,7 +19,7 @@ const Scene = () => {
     // Camera
     const camera = new THREE.PerspectiveCamera(
       75, // Field of view
-      window.innerWidth / window.innerHeight, // Aspect ratio
+      mountRef.current.clientWidth / mountRef.current.clientHeight, // Aspect ratio
       0.1, // Near clipping plane
       100 // Far clipping plane
     )
@@ -27,7 +27,7 @@ const Scene = () => {
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setSize(window.innerWidth, window.innerHeight)
+    renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight)
     renderer.setPixelRatio(window.devicePixelRatio)
     
     // Add canvas to the container
@@ -66,9 +66,9 @@ const Scene = () => {
     const handleResize = () => {
       if (!mountRef.current) return
       
-      camera.aspect = window.innerWidth / window.innerHeight
+      camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight
       camera.updateProjectionMatrix()
-      renderer.setSize(window.innerWidth, window.innerHeight)
+      renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight)
     }
 
     window.addEventListener('resize', handleResize)
