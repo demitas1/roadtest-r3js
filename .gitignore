@@ -6,6 +6,7 @@
 *.pyc
 *.class
 node_modules/
+venv/
 dist/
 build/
 release/
