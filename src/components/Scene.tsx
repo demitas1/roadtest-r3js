@@ -7,7 +7,8 @@ const Scene = () => {
   useEffect(() => {
     if (!mountRef.current) return
     
-    // delete children of mountRef
+    // まず、マウント要素に既にcanvasがないか確認
+    // もし子要素があれば、すべて削除
     while (mountRef.current.firstChild) {
       mountRef.current.removeChild(mountRef.current.firstChild)
     }
@@ -16,10 +17,14 @@ const Scene = () => {
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x222222)
 
+    // コンテナの寸法を取得
+    const containerWidth = mountRef.current.clientWidth
+    const containerHeight = mountRef.current.clientHeight
+
     // Camera
     const camera = new THREE.PerspectiveCamera(
       75, // Field of view
-      mountRef.current.clientWidth / mountRef.current.clientHeight, // Aspect ratio
+      containerWidth / containerHeight, // Aspect ratio
       0.1, // Near clipping plane
       100 // Far clipping plane
     )
@@ -27,7 +32,7 @@ const Scene = () => {
 
     // Renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight)
+    renderer.setSize(containerWidth, containerHeight)
     renderer.setPixelRatio(window.devicePixelRatio)
     
     // Add canvas to the container
@@ -66,9 +71,12 @@ const Scene = () => {
     const handleResize = () => {
       if (!mountRef.current) return
       
-      camera.aspect = mountRef.current.clientWidth / mountRef.current.clientHeight
+      const containerWidth = mountRef.current.clientWidth
+      const containerHeight = mountRef.current.clientHeight
+
+      camera.aspect = containerWidth / containerHeight
       camera.updateProjectionMatrix()
-      renderer.setSize(mountRef.current.clientWidth, mountRef.current.clientHeight)
+      renderer.setSize(containerWidth, containerHeight)
     }
 
     window.addEventListener('resize', handleResize)
