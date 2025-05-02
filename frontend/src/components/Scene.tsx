@@ -10,7 +10,15 @@ const Scene = (sceneProps : SceneProps) => {
   const mountRef = useRef<HTMLDivElement>(null)
   // 立方体のマテリアルへの参照を保持するためのref
   const materialRef = useRef<THREE.MeshStandardMaterial | null>(null)
+  const animationRef = useRef<number>(0)
   const color = sceneProps.testColor
+
+  // refs to Three.js objects
+  const scene: THREE.Scene | null = null;
+  const model: THREE.Group | null = null;
+  const materials: Map<string, THREE.Material> = new Map();
+  const meshes: Map<string, THREE.Mesh> = new Map();
+
 
   useEffect(() => {
     if (!mountRef.current) return
@@ -21,13 +29,20 @@ const Scene = (sceneProps : SceneProps) => {
       mountRef.current.removeChild(mountRef.current.firstChild)
     }
 
+    // get container size
+    const containerWidth = mountRef.current.clientWidth
+    const containerHeight = mountRef.current.clientHeight
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setSize(containerWidth, containerHeight)
+    renderer.setPixelRatio(window.devicePixelRatio)
+    // Add canvas to the container
+    mountRef.current.appendChild(renderer.domElement)
+
     // Scene
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x222222)
-
-    // コンテナの寸法を取得
-    const containerWidth = mountRef.current.clientWidth
-    const containerHeight = mountRef.current.clientHeight
 
     // Camera
     const camera = new THREE.PerspectiveCamera(
@@ -37,14 +52,6 @@ const Scene = (sceneProps : SceneProps) => {
       100 // Far clipping plane
     )
     camera.position.z = 5
-
-    // Renderer
-    const renderer = new THREE.WebGLRenderer({ antialias: true })
-    renderer.setSize(containerWidth, containerHeight)
-    renderer.setPixelRatio(window.devicePixelRatio)
-
-    // Add canvas to the container
-    mountRef.current.appendChild(renderer.domElement)
 
     // Create a cube
     const geometry = new THREE.BoxGeometry(2, 2, 2)
@@ -67,16 +74,8 @@ const Scene = (sceneProps : SceneProps) => {
     directionalLight.position.set(5, 5, 5)
     scene.add(directionalLight)
 
-    // Animation loop
-    const animate = () => {
-      requestAnimationFrame(animate)
-
-      // Rotate the cube
-      cube.rotation.x += 0.01
-      cube.rotation.y += 0.01
-
-      renderer.render(scene, camera)
-    }
+    // load the scene from GLTF
+    loadModel(scene, materials, meshes)
 
     // Handle window resize
     const handleResize = () => {
@@ -89,16 +88,33 @@ const Scene = (sceneProps : SceneProps) => {
       camera.updateProjectionMatrix()
       renderer.setSize(containerWidth, containerHeight)
     }
-
+    // add resize event listener
     window.addEventListener('resize', handleResize)
 
+    // Animation loop
+    const animate = () => {
+      animationRef.current = requestAnimationFrame(animate)
+
+      // Rotate the cube
+      cube.rotation.x += 0.01
+      cube.rotation.y += 0.01
+
+      renderer.render(scene, camera)
+    }
     // Start animation loop
     animate()
 
-    // Clean up
+    // Clean up function
     return () => {
+      // remove event listener
       window.removeEventListener('resize', handleResize)
 
+      // delete animation callback
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current)
+      }
+
+      // unmount DOM element
       if (mountRef.current) {
         mountRef.current.removeChild(renderer.domElement)
       }
@@ -120,6 +136,78 @@ const Scene = (sceneProps : SceneProps) => {
       materialRef.current.needsUpdate = true // マテリアルの更新を強制
     }
   }, [color]) // colorが変更されたときだけ実行
+
+  //
+  // load objects to the scene
+  //
+
+  const loadModel = (
+    scene: THREE.Scene,
+    materials: Map<string, THREE.Material>,
+    meshes: Map<string, THREE.Mesh>
+  ) => {
+    const loader = new GLTFLoader()
+
+    // 型によって読み込み方法を分岐
+    if (true) {
+      // URLからロード
+      loader.load(
+        'http://localhost:8000/static/TestCube.glb',
+        (gltf) => onModelLoaded(gltf, scene, materials, meshes),
+        (xhr) => {
+          console.log((xhr.loaded / xhr.total * 100) + '% loaded')
+        },
+        (error) => {
+          console.error('GLTFLoader error:', error)
+        }
+      )
+    } else {
+      // JSONオブジェクトから直接ロード
+      loader.parse(
+        JSON.stringify(gltfData.source),
+        '',
+        (gltf) => onModelLoaded(gltf, scene, materials, meshes),
+        (error) => {
+          console.error('GLTFLoader parsing error:', error)
+        }
+      )
+    }
+  }
+
+  const onModelLoaded = (
+    gltf: GLTF,
+    scene: THREE.Scene,
+    materials: Map<string, THREE.Material>,
+    meshes: Map<string, THREE.Mesh>
+  ) => {
+    const model = gltf.scene
+    console.log('GLTF load complete.')
+
+    // collect objects in the GLTF
+    model.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        meshes.set(object.name, object)
+        console.log('gltf: mesh')
+
+        if (Array.isArray(object.material)) {
+          object.material.forEach((mat, index) => {
+            materials.set(`${object.name}_material_${index}`, mat)
+            console.log(`${object.name}_material_${index}`)
+          })
+        } else {
+          materials.set(`${object.name}_material`, object.material)
+          console.log(`${object.name}_material`)
+        }
+
+        // シャドウの有効化
+        object.castShadow = true
+        object.receiveShadow = true
+      }
+    })
+
+    // add to the scene
+    scene.add(model)
+  }
 
   return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
 }
