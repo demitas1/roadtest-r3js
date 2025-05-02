@@ -1,20 +1,16 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import * as THREE from 'three'
+import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader'
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 
-// 色情報を受け取るためにpropsを追加
-interface SceneProps {
-  color?: {
-    r: number,
-    g: number,
-    b: number,
-    a: number
-  }
-}
+import { SceneProps, SceneObjects, GltfSceneData } from '../types/gltf'
 
-const Scene = ({ color }: SceneProps) => {
+
+const Scene = (sceneProps : SceneProps) => {
   const mountRef = useRef<HTMLDivElement>(null)
   // 立方体のマテリアルへの参照を保持するためのref
   const materialRef = useRef<THREE.MeshStandardMaterial | null>(null)
+  const color = sceneProps.testColor
 
   useEffect(() => {
     if (!mountRef.current) return

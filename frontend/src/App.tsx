@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import Scene from './components/Scene'
 
+import { SceneProps } from './types/gltf'
+
 function App() {
   const [message, setMessage] = useState<string>('Hello from React')
   const [responseSize, setResponseSize] = useState<number | null>(null)
@@ -105,7 +107,7 @@ function App() {
   return (
     <div className="app-container">
       <div className="scene-container">
-        <Scene color={cubeColor} />
+        <Scene testColor={cubeColor} />
       </div>
 
       <div className="controls">

@@ -1,6 +1,7 @@
 # main.py
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import asyncio
 import random
@@ -15,6 +16,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Static ファイル提供
+app.mount("/static", StaticFiles(directory="./public"), name="static")
 
 @app.get("/")
 async def read_root():
@@ -63,9 +67,7 @@ def generate_binary_response(message: str) -> bytes:
 
     # すべてを連結
     response = random_data
-
     return response
 
 if __name__ == "__main__":
-    # Uvicornサーバーを起動
     uvicorn.run(app, host="0.0.0.0", port=8000)
