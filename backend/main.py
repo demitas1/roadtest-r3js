@@ -62,7 +62,7 @@ def generate_binary_response(message: str) -> bytes:
     timestamp = bytes([random.randint(0, 255) for _ in range(4)])  # ダミーのタイムスタンプ
 
     # すべてを連結
-    response = header + timestamp + message_bytes + random_data
+    response = random_data
 
     return response
 

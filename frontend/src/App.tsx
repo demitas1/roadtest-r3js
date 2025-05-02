@@ -8,6 +8,11 @@ function App() {
   const [statusMessage, setStatusMessage] = useState<string>('未接続')
   const websocketRef = useRef<WebSocket | null>(null)
 
+  // 立方体の色情報を保持するためのステート
+  const [cubeColor, setCubeColor] = useState<{ r: number, g: number, b: number, a: number }>({
+    r: 51, g: 102, b: 255, a: 255 // 初期色: #3366ff (不透明)
+  })
+
   // WebSocketの初期化
   useEffect(() => {
     // WebSocketの接続
@@ -27,7 +32,31 @@ function App() {
           setResponseSize(event.data.size)
           console.log(`受信したバイナリデータのサイズ: ${event.data.size} バイト`)
 
-          // ここで必要に応じてバイナリデータを処理（今回は表示のみ）
+          // バイナリデータを解析して色情報を取得
+          const reader = new FileReader()
+
+          reader.onload = () => {
+            if (reader.result instanceof ArrayBuffer) {
+              // ArrayBufferをUint8Arrayに変換
+              const uint8Array = new Uint8Array(reader.result)
+
+              // 最初の4バイトをRGBAとして解釈
+              if (uint8Array.length >= 4) {
+                const r = uint8Array[0]
+                const g = uint8Array[1]
+                const b = uint8Array[2]
+                const a = uint8Array[3]
+
+                console.log(`RGBA値: (${r}, ${g}, ${b}, ${a})`)
+
+                // 色情報を更新
+                setCubeColor({ r, g, b, a })
+              }
+            }
+          }
+
+          // BlobをArrayBufferとして読み込む
+          reader.readAsArrayBuffer(event.data)
         }
       }
 
@@ -76,7 +105,7 @@ function App() {
   return (
     <div className="app-container">
       <div className="scene-container">
-        <Scene />
+        <Scene color={cubeColor} />
       </div>
 
       <div className="controls">
@@ -85,6 +114,16 @@ function App() {
         {responseSize !== null && (
           <p>最後に受信したデータのサイズ: {responseSize} バイト</p>
         )}
+        <div className="color-display" style={{
+          marginBottom: '15px',
+          padding: '10px',
+          backgroundColor: `rgba(${cubeColor.r}, ${cubeColor.g}, ${cubeColor.b}, ${cubeColor.a/255})`,
+          color: ((cubeColor.r*0.299 + cubeColor.g*0.587 + cubeColor.b*0.114) > 186) ? '#000' : '#fff',
+          borderRadius: '4px',
+          textAlign: 'center'
+        }}>
+          現在の色: RGB({cubeColor.r}, {cubeColor.g}, {cubeColor.b}, {cubeColor.a/255})
+        </div>
         <div className="input-group">
           <input
             type="text"
@@ -104,4 +143,3 @@ function App() {
 }
 
 export default App
-
