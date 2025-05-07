@@ -14,8 +14,6 @@ const Scene = (sceneProps : SceneProps) => {
   const color = sceneProps.testColor
 
   // refs to Three.js objects
-  const scene: THREE.Scene | null = null;
-  const model: THREE.Group | null = null;
   const materials: Map<string, THREE.Material> = new Map();
   const meshes: Map<string, THREE.Mesh> = new Map();
 
@@ -51,7 +49,7 @@ const Scene = (sceneProps : SceneProps) => {
       0.1, // Near clipping plane
       100 // Far clipping plane
     )
-    camera.position.z = 5
+    camera.position.z = 20
 
     // Create a cube
     const geometry = new THREE.BoxGeometry(2, 2, 2)
@@ -98,6 +96,17 @@ const Scene = (sceneProps : SceneProps) => {
       // Rotate the cube
       cube.rotation.x += 0.01
       cube.rotation.y += 0.01
+
+      // TEST: access to gltf individual objects
+      const cube_1 = meshes.get('Cube')
+      if (cube_1) {
+        cube_1.rotation.x += 0.01
+      }
+
+      const icosphere_1 = meshes.get('Icosphere')
+      if (icosphere_1) {
+        icosphere_1.rotation.y += 0.01
+      }
 
       renderer.render(scene, camera)
     }
@@ -152,7 +161,7 @@ const Scene = (sceneProps : SceneProps) => {
     if (true) {
       // URLからロード
       loader.load(
-        'http://localhost:8000/static/TestCube.glb',
+        'http://localhost:8000/static/TestScene.glb',
         (gltf) => onModelLoaded(gltf, scene, materials, meshes),
         (xhr) => {
           console.log((xhr.loaded / xhr.total * 100) + '% loaded')
@@ -187,16 +196,16 @@ const Scene = (sceneProps : SceneProps) => {
     model.traverse((object) => {
       if (object instanceof THREE.Mesh) {
         meshes.set(object.name, object)
-        console.log('gltf: mesh')
+        console.log(`gltf: mesh: ${object.name}`)
 
         if (Array.isArray(object.material)) {
           object.material.forEach((mat, index) => {
             materials.set(`${object.name}_material_${index}`, mat)
-            console.log(`${object.name}_material_${index}`)
+            console.log(`material: ${object.name}_material_${index}`)
           })
         } else {
           materials.set(`${object.name}_material`, object.material)
-          console.log(`${object.name}_material`)
+          console.log(`material: ${object.name}_material`)
         }
 
         // シャドウの有効化
