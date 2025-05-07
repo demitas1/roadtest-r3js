@@ -43,9 +43,20 @@ html, body {
 
 .controls h2 {
   margin-bottom: 20px;
+  margin-top: 30px;
   font-size: 1.6rem;
   border-bottom: 1px solid #444;
   padding-bottom: 10px;
+}
+
+.controls h2:first-child {
+  margin-top: 0;
+}
+
+.controls h3 {
+  margin-bottom: 15px;
+  font-size: 1.3rem;
+  color: #bbb;
 }
 
 .controls p {
@@ -55,6 +66,7 @@ html, body {
 
 .input-group {
   margin-top: 20px;
+  margin-bottom: 30px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -87,4 +99,74 @@ html, body {
 .input-group button:disabled {
   background-color: #444;
   cursor: not-allowed;
+}
+
+/* メッシュ一覧セクション */
+.mesh-section {
+  margin-top: 30px;
+}
+
+.mesh-list {
+  list-style: none;
+  padding: 0;
+}
+
+.mesh-item {
+  transition: background-color 0.2s;
+}
+
+.mesh-item:hover {
+  background-color: #3a3a3a !important;
+}
+
+.mesh-name {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+.mesh-position {
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.mesh-visibility-label {
+  display: inline-block;
+  min-width: 24px;
+}
+
+.mesh-visibility-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #4A90E2;
+  cursor: pointer;
+}
+
+.mesh-details {
+  background-color: #333;
+  border-radius: 4px;
+  padding: 15px;
+  margin-top: 10px;
+}
+
+.mesh-details table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.mesh-details table tr:not(:last-child) {
+  border-bottom: 1px solid #444;
+}
+
+.mesh-details table td {
+  padding: 8px 0;
+}
+
+.mesh-details table td:first-child {
+  font-weight: bold;
+  width: 40%;
+  color: #aaa;
+}
+
+.mesh-details table td:last-child {
+  color: #fff;
 }

@@ -3,20 +3,22 @@ import * as THREE from 'three'
 import { GLTFLoader, GLTF } from 'three/examples/jsm/loaders/GLTFLoader'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 
-import { SceneProps, SceneObjects, GltfSceneData } from '../types/gltf'
+import { SceneProps, SceneObjects, GltfSceneData, MeshInfo } from '../types/gltf'
 
-
-const Scene = (sceneProps : SceneProps) => {
+const Scene = (sceneProps: SceneProps) => {
   const mountRef = useRef<HTMLDivElement>(null)
   // 立方体のマテリアルへの参照を保持するためのref
   const materialRef = useRef<THREE.MeshStandardMaterial | null>(null)
   const animationRef = useRef<number>(0)
   const color = sceneProps.testColor
+  const meshVisibility = sceneProps.meshVisibility || {}
+  
+  // Three.js オブジェクトへの参照をrefに保存
+  const meshesRef = useRef<Map<string, THREE.Mesh>>(new Map());
+  const materialsRef = useRef<Map<string, THREE.Material>>(new Map());
 
-  // refs to Three.js objects
-  const materials: Map<string, THREE.Material> = new Map();
-  const meshes: Map<string, THREE.Mesh> = new Map();
-
+  // メッシュ情報を収集
+  const [meshInfos, setMeshInfos] = useState<MeshInfo[]>([])
 
   useEffect(() => {
     if (!mountRef.current) return
@@ -73,7 +75,7 @@ const Scene = (sceneProps : SceneProps) => {
     scene.add(directionalLight)
 
     // load the scene from GLTF
-    loadModel(scene, materials, meshes)
+    loadModel(scene, materialsRef.current, meshesRef.current)
 
     // Handle window resize
     const handleResize = () => {
@@ -98,12 +100,12 @@ const Scene = (sceneProps : SceneProps) => {
       cube.rotation.y += 0.01
 
       // TEST: access to gltf individual objects
-      const cube_1 = meshes.get('Cube')
+      const cube_1 = meshesRef.current.get('Cube')
       if (cube_1) {
         cube_1.rotation.x += 0.01
       }
 
-      const icosphere_1 = meshes.get('Icosphere')
+      const icosphere_1 = meshesRef.current.get('Icosphere')
       if (icosphere_1) {
         icosphere_1.rotation.y += 0.01
       }
@@ -136,6 +138,13 @@ const Scene = (sceneProps : SceneProps) => {
     }
   }, []) // Empty dependency array means this effect runs once on mount
 
+  // メッシュ情報が更新されたときに親コンポーネントに通知
+  useEffect(() => {
+    if (meshInfos.length > 0 && sceneProps.onMeshesLoaded) {
+      sceneProps.onMeshesLoaded(meshInfos);
+    }
+  }, [meshInfos, sceneProps.onMeshesLoaded]);
+
   // 色の変更を監視する新しいuseEffect
   useEffect(() => {
     if (materialRef.current && color) {
@@ -145,6 +154,26 @@ const Scene = (sceneProps : SceneProps) => {
       materialRef.current.needsUpdate = true // マテリアルの更新を強制
     }
   }, [color]) // colorが変更されたときだけ実行
+  
+  // メッシュのvisibilityを監視するuseEffect
+  useEffect(() => {
+    console.log("changed visibility:", meshVisibility);
+    // meshesRef.currentが空でないことを確認
+    if (meshesRef.current.size > 0) {
+      // meshVisibilityが更新されたら、対応するメッシュのvisibilityを変更
+      Object.entries(meshVisibility).forEach(([meshName, isVisible]) => {
+        const mesh = meshesRef.current.get(meshName);
+        if (mesh) {
+          console.log(`mesh "${meshName}" is set to ${isVisible ? 'visible' : 'not visible'}`);
+          mesh.visible = isVisible;
+        } else {
+          console.log(`mesh "${meshName}" is not found`);
+        }
+      });
+    } else {
+      console.log("meshesRef is empty - no meshes are loaded");
+    }
+  }, [meshVisibility]); // meshesRef.currentは参照が変わらないのでここでは依存に含めない
 
   //
   // load objects to the scene
@@ -192,30 +221,75 @@ const Scene = (sceneProps : SceneProps) => {
     const model = gltf.scene
     console.log('GLTF load complete.')
 
+    const loadedMeshInfos: MeshInfo[] = [];
+
     // collect objects in the GLTF
     model.traverse((object) => {
       if (object instanceof THREE.Mesh) {
         meshes.set(object.name, object)
         console.log(`gltf: mesh: ${object.name}`)
 
+        let materialName = '';
         if (Array.isArray(object.material)) {
           object.material.forEach((mat, index) => {
-            materials.set(`${object.name}_material_${index}`, mat)
-            console.log(`material: ${object.name}_material_${index}`)
+            const matName = `${object.name}_material_${index}`;
+            materials.set(matName, mat)
+            console.log(`material: ${matName}`)
+            if (index === 0) materialName = matName;
           })
         } else {
-          materials.set(`${object.name}_material`, object.material)
-          console.log(`material: ${object.name}_material`)
+          const matName = `${object.name}_material`;
+          materials.set(matName, object.material)
+          console.log(`material: ${matName}`)
+          materialName = matName;
         }
 
         // シャドウの有効化
         object.castShadow = true
         object.receiveShadow = true
+
+        // メッシュ情報を収集
+        let vertexCount = 0;
+        let triangleCount = 0;
+        
+        if (object.geometry) {
+          const position = object.geometry.getAttribute('position');
+          if (position) {
+            vertexCount = position.count;
+            triangleCount = Math.floor(vertexCount / 3);
+          }
+        }
+
+        loadedMeshInfos.push({
+          name: object.name,
+          materialName,
+          position: object.position.clone(),
+          rotation: object.rotation.clone(),
+          scale: object.scale.clone(),
+          vertexCount,
+          triangleCount
+        });
       }
     })
 
+    // メッシュ情報を設定
+    setMeshInfos(loadedMeshInfos);
+
     // add to the scene
     scene.add(model)
+    
+    // モデルが読み込まれた後で、現在のvisibility設定を適用
+    // これは特に重要で、最初のレンダリング時にvisibility設定を反映するために必要
+    if (Object.keys(meshVisibility).length > 0) {
+      console.log("初期visibilityを適用します:", meshVisibility);
+      Object.entries(meshVisibility).forEach(([meshName, isVisible]) => {
+        const mesh = meshes.get(meshName);
+        if (mesh) {
+          console.log(`初期状態: メッシュ「${meshName}」のvisibilityを${isVisible ? '表示' : '非表示'}に設定`);
+          mesh.visible = isVisible;
+        }
+      });
+    }
   }
 
   return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />

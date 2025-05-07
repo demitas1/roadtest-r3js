@@ -46,6 +46,17 @@ export interface GltfSceneData {
   };
 }
 
+// メッシュ情報の型定義
+export interface MeshInfo {
+  name: string;
+  materialName: string;
+  position: THREE.Vector3;
+  rotation: THREE.Euler;
+  scale: THREE.Vector3;
+  vertexCount: number;
+  triangleCount: number;
+}
+
 // シーンコンポーネントのProps
 export interface SceneProps {
   gltfData?: GltfSceneData;
@@ -55,6 +66,8 @@ export interface SceneProps {
     b: number;
     a: number;
   }
+  onMeshesLoaded?: (meshInfos: MeshInfo[]) => void;
+  meshVisibility?: Record<string, boolean>;
 }
 
 // シーンオブジェクトの型定義
