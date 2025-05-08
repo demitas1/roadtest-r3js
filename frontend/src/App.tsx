@@ -13,11 +13,10 @@ function App() {
   const [meshVisibility, setMeshVisibility] = useState<Record<string, boolean>>({})
   // メッシュの初期化済みフラグ
   const meshesInitializedRef = useRef<boolean>(false)
-
-  // 立方体の色情報を保持するためのステート
-  const [cubeColor, setCubeColor] = useState<{ r: number, g: number, b: number, a: number }>({
-    r: 51, g: 102, b: 255, a: 255 // 初期色: #3366ff (不透明)
-  })
+  // 現在ロードされているシーンのURL
+  const [currentSceneUrl, setCurrentSceneUrl] = useState<string>('')
+  // シーン再読み込みトリガー
+  const [reloadScene, setReloadScene] = useState<number>(0)
 
   // WebSocketの初期化
   useEffect(() => {
@@ -54,15 +53,56 @@ function App() {
                 const a = uint8Array[3]
 
                 console.log(`RGBA値: (${r}, ${g}, ${b}, ${a})`)
+                // do something
 
-                // 色情報を更新
-                setCubeColor({ r, g, b, a })
               }
             }
           }
 
           // BlobをArrayBufferとして読み込む
           reader.readAsArrayBuffer(event.data)
+        } 
+        // JSONデータを受信した場合の処理
+        else if (typeof event.data === 'string') {
+          try {
+            const jsonData = JSON.parse(event.data)
+            console.log('受信したJSONデータ:', jsonData)
+            
+            // JSONのサイズを表示
+            setResponseSize(event.data.length)
+            console.log(`受信したJSONデータのサイズ: ${event.data.length} バイト`)
+            
+            // シーン変更コマンドの処理
+            if (jsonData['new scene'] === 'scene1') {
+              console.log('シーン1への切り替えコマンドを受信しました')
+              // 新しいシーンURLを設定
+              setCurrentSceneUrl('http://localhost:8000/static/TestCube.glb')
+              // メッシュ情報をリセット
+              setMeshInfos([])
+              setSelectedMesh(null)
+              setMeshVisibility({})
+              meshesInitializedRef.current = false
+              // シーンの再読み込みをトリガー
+              setReloadScene(prev => prev + 1)
+              setStatusMessage('シーン1に切り替えました')
+            }
+            // 色情報の処理
+            else if (jsonData.color) {
+              const { r, g, b, a = 255 } = jsonData.color
+              if (r !== undefined && g !== undefined && b !== undefined) {
+                setCubeColor({ r, g, b, a })
+                console.log(`JSONから色情報を更新: RGB(${r}, ${g}, ${b}, ${a})`)
+              }
+            }
+            // その他のテストメッセージ
+            else if (jsonData['test message']) {
+              console.log(`テストメッセージを受信: ${jsonData['test message']}`)
+            }
+          } catch (error) {
+            console.log('受信したデータはJSONではありません:', event.data)
+            // 非JSONテキストデータのサイズを表示
+            setResponseSize(event.data.length)
+          }
         }
       }
 
@@ -139,9 +179,10 @@ function App() {
     <div className="app-container">
       <div className="scene-container">
         <Scene 
-          testColor={cubeColor} 
           onMeshesLoaded={handleMeshesLoaded} 
           meshVisibility={meshVisibility}
+          modelUrl={currentSceneUrl}
+          reloadTrigger={reloadScene}
         />
       </div>
 
@@ -154,12 +195,10 @@ function App() {
         <div className="color-display" style={{
           marginBottom: '15px',
           padding: '10px',
-          backgroundColor: `rgba(${cubeColor.r}, ${cubeColor.g}, ${cubeColor.b}, ${cubeColor.a/255})`,
-          color: ((cubeColor.r*0.299 + cubeColor.g*0.587 + cubeColor.b*0.114) > 186) ? '#000' : '#fff',
           borderRadius: '4px',
           textAlign: 'center'
         }}>
-          現在の色: RGB({cubeColor.r}, {cubeColor.g}, {cubeColor.b}, {cubeColor.a/255})
+          test message
         </div>
         <div className="input-group">
           <input
@@ -173,6 +212,11 @@ function App() {
           >
             送信
           </button>
+        </div>
+
+        <div className="scene-info">
+          <h3>現在のシーン</h3>
+          <p>{currentSceneUrl.split('/').pop()}</p>
         </div>
 
         {/* メッシュ一覧セクション */}

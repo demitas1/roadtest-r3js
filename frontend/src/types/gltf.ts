@@ -68,6 +68,8 @@ export interface SceneProps {
   }
   onMeshesLoaded?: (meshInfos: MeshInfo[]) => void;
   meshVisibility?: Record<string, boolean>;
+  modelUrl?: string;  // 新しいモデルURLプロパティ
+  reloadTrigger?: number;  // シーン再読み込みトリガープロパティ
 }
 
 // シーンオブジェクトの型定義

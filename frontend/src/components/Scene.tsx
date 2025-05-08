@@ -7,19 +7,29 @@ import { SceneProps, SceneObjects, GltfSceneData, MeshInfo } from '../types/gltf
 
 const Scene = (sceneProps: SceneProps) => {
   const mountRef = useRef<HTMLDivElement>(null)
-  // 立方体のマテリアルへの参照を保持するためのref
-  const materialRef = useRef<THREE.MeshStandardMaterial | null>(null)
   const animationRef = useRef<number>(0)
-  const color = sceneProps.testColor
   const meshVisibility = sceneProps.meshVisibility || {}
+  const modelUrl = sceneProps.modelUrl || ''
+  const reloadTrigger = sceneProps.reloadTrigger || 0
+  
+  // Three.js オブジェクトへの参照を保存
+  const sceneRef = useRef<THREE.Scene | null>(null)
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
+  const controlsRef = useRef<OrbitControls | null>(null)
+  const lightsRef = useRef<THREE.Light[]>([])
+  const modelRef = useRef<THREE.Group | null>(null)
   
   // Three.js オブジェクトへの参照をrefに保存
   const meshesRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const materialsRef = useRef<Map<string, THREE.Material>>(new Map());
+  // テクスチャを追跡するための新しいMap
+  const texturesRef = useRef<Map<string, THREE.Texture>>(new Map());
 
   // メッシュ情報を収集
   const [meshInfos, setMeshInfos] = useState<MeshInfo[]>([])
 
+  // シーンの初期化
   useEffect(() => {
     if (!mountRef.current) return
 
@@ -39,10 +49,12 @@ const Scene = (sceneProps: SceneProps) => {
     renderer.setPixelRatio(window.devicePixelRatio)
     // Add canvas to the container
     mountRef.current.appendChild(renderer.domElement)
+    rendererRef.current = renderer
 
     // Scene
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0x222222)
+    sceneRef.current = scene
 
     // Camera
     const camera = new THREE.PerspectiveCamera(
@@ -52,41 +64,37 @@ const Scene = (sceneProps: SceneProps) => {
       100 // Far clipping plane
     )
     camera.position.z = 20
+    cameraRef.current = camera
 
-    // Create a cube
-    const geometry = new THREE.BoxGeometry(2, 2, 2)
-    const material = new THREE.MeshStandardMaterial({
-      color: color ? new THREE.Color(color.r/255, color.g/255, color.b/255) : 0x3366ff,
-      roughness: 0.4,
-      metalness: 0.3,
-      transparent: true,
-      opacity: color ? color.a/255 : 1.0
-    })
-    materialRef.current = material  // マテリアルへの参照を保存
-    const cube = new THREE.Mesh(geometry, material)
-    scene.add(cube)
+    // Controls
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.enableDamping = true
+    controls.dampingFactor = 0.25
+    controlsRef.current = controls
 
     // Add lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
-    scene.add(ambientLight)
+    sceneRef.current.add(ambientLight)
+    lightsRef.current.push(ambientLight)
 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1)
     directionalLight.position.set(5, 5, 5)
-    scene.add(directionalLight)
+    sceneRef.current.add(directionalLight)
+    lightsRef.current.push(directionalLight)
 
     // load the scene from GLTF
-    loadModel(scene, materialsRef.current, meshesRef.current)
+    loadModel()
 
     // Handle window resize
     const handleResize = () => {
-      if (!mountRef.current) return
+      if (!mountRef.current || !cameraRef.current || !rendererRef.current) return
 
       const containerWidth = mountRef.current.clientWidth
       const containerHeight = mountRef.current.clientHeight
 
-      camera.aspect = containerWidth / containerHeight
-      camera.updateProjectionMatrix()
-      renderer.setSize(containerWidth, containerHeight)
+      cameraRef.current.aspect = containerWidth / containerHeight
+      cameraRef.current.updateProjectionMatrix()
+      rendererRef.current.setSize(containerWidth, containerHeight)
     }
     // add resize event listener
     window.addEventListener('resize', handleResize)
@@ -95,10 +103,7 @@ const Scene = (sceneProps: SceneProps) => {
     const animate = () => {
       animationRef.current = requestAnimationFrame(animate)
 
-      // Rotate the cube
-      cube.rotation.x += 0.01
-      cube.rotation.y += 0.01
-
+      // Rotate the objects if it exists
       // TEST: access to gltf individual objects
       const cube_1 = meshesRef.current.get('Cube')
       if (cube_1) {
@@ -110,7 +115,15 @@ const Scene = (sceneProps: SceneProps) => {
         icosphere_1.rotation.y += 0.01
       }
 
-      renderer.render(scene, camera)
+      // Update controls
+      if (controlsRef.current) {
+        controlsRef.current.update()
+      }
+
+      // Render scene
+      if (rendererRef.current && sceneRef.current && cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current)
+      }
     }
     // Start animation loop
     animate()
@@ -125,122 +138,213 @@ const Scene = (sceneProps: SceneProps) => {
         cancelAnimationFrame(animationRef.current)
       }
 
-      // unmount DOM element
-      if (mountRef.current) {
-        mountRef.current.removeChild(renderer.domElement)
-      }
+      // 最終的なクリーンアップとしてモデルを処理
+      clearCurrentModel();
 
-      // Dispose of Three.js resources to prevent memory leaks
-      geometry.dispose()
-      material.dispose()
-      scene.remove(cube)
-      renderer.dispose()
+      // Clean up renderer
+      if (rendererRef.current && mountRef.current) {
+        mountRef.current.removeChild(rendererRef.current.domElement)
+        rendererRef.current.dispose()
+      }
     }
   }, []) // Empty dependency array means this effect runs once on mount
 
-  // メッシュ情報が更新されたときに親コンポーネントに通知
-  useEffect(() => {
-    if (meshInfos.length > 0 && sceneProps.onMeshesLoaded) {
-      sceneProps.onMeshesLoaded(meshInfos);
-    }
-  }, [meshInfos, sceneProps.onMeshesLoaded]);
+  // モデルのロード関数
+  const loadModel = (clearAllSceneObjects = false) => {
+    if (!sceneRef.current) return
 
-  // 色の変更を監視する新しいuseEffect
-  useEffect(() => {
-    if (materialRef.current && color) {
-      // マテリアルが存在し、色情報が提供されている場合に色を更新
-      materialRef.current.color.setRGB(color.r/255, color.g/255, color.b/255)
-      materialRef.current.opacity = color.a/255
-      materialRef.current.needsUpdate = true // マテリアルの更新を強制
-    }
-  }, [color]) // colorが変更されたときだけ実行
+    // 既存のモデルがあれば削除
+    // 引数で指定されたオプションを渡して、シーン内のすべてのオブジェクトをクリアするか決定
+    clearCurrentModel(clearAllSceneObjects)
+    
+    // URLからモデルをロード
+    const loader = new GLTFLoader()
+    console.log(`モデルをロード中: ${modelUrl}`)
+    loader.load(
+      modelUrl,
+      (gltf) => onModelLoaded(gltf),
+      (xhr) => {
+        console.log((xhr.loaded / xhr.total * 100) + '% loaded')
+      },
+      (error) => {
+        console.error('GLTFLoader error:', error)
+      }
+    )
+  }
   
-  // メッシュのvisibilityを監視するuseEffect
-  useEffect(() => {
-    console.log("changed visibility:", meshVisibility);
-    // meshesRef.currentが空でないことを確認
-    if (meshesRef.current.size > 0) {
-      // meshVisibilityが更新されたら、対応するメッシュのvisibilityを変更
-      Object.entries(meshVisibility).forEach(([meshName, isVisible]) => {
-        const mesh = meshesRef.current.get(meshName);
-        if (mesh) {
-          console.log(`mesh "${meshName}" is set to ${isVisible ? 'visible' : 'not visible'}`);
-          mesh.visible = isVisible;
-        } else {
-          console.log(`mesh "${meshName}" is not found`);
+  // 現在のモデルをクリアする関数（拡張版）
+  const clearCurrentModel = (clearAllSceneObjects = false) => {
+    if (!sceneRef.current) return
+    
+    console.log('モデルクリア処理を開始します。' + (clearAllSceneObjects ? ' シーン内のすべてのオブジェクトをクリアします。' : ''));
+    
+    // 既存のモデルがあれば削除
+    if (modelRef.current) {
+      console.log(`モデルオブジェクトを削除します: ${modelRef.current.name || 'unnamed model'}`);
+      
+      // モデル内のすべてのリソースを適切に開放するためのトラバース
+      modelRef.current.traverse((object) => {
+        // オブジェクトタイプごとの適切な処理
+        if (object instanceof THREE.Mesh) {
+          console.log(`メッシュを処理: ${object.name}`);
+          
+          // ジオメトリを処理
+          if (object.geometry) {
+            console.log(`ジオメトリを処理: ${object.geometry.uuid}`);
+            object.geometry.dispose();
+          }
+          
+          // マテリアルを処理（配列またはシングル）
+          if (Array.isArray(object.material)) {
+            object.material.forEach((material, index) => {
+              disposeMaterial(material, `${object.name}_material_${index}`);
+            });
+          } else if (object.material) {
+            disposeMaterial(object.material, `${object.name}_material`);
+          }
+        }
+        
+        // 他の特殊なオブジェクトタイプのクリーンアップ処理をここに追加可能
+      });
+      
+      // シーンからモデルを削除
+      sceneRef.current.remove(modelRef.current);
+      modelRef.current = null;
+    }
+    
+    // オプション: シーン内のすべてのメッシュとマテリアルをクリア
+    if (clearAllSceneObjects && sceneRef.current) {
+      console.log('シーン内のすべてのメッシュとマテリアルをクリアします...');
+      
+      // 削除するオブジェクトを一時配列に保存（シーン構造を変更しながらのトラバースを避けるため）
+      const objectsToRemove: THREE.Object3D[] = [];
+      
+      // シーン全体をトラバースして、メッシュとマテリアルを探す
+      sceneRef.current.traverse((object) => {
+        // メッシュの処理
+        if (object instanceof THREE.Mesh) {
+          console.log(`シーンから削除するメッシュを見つけました: ${object.name || 'unnamed mesh'}`);
+          
+          // ジオメトリの処理
+          if (object.geometry) {
+            console.log(`ジオメトリを処理: ${object.geometry.uuid}`);
+            object.geometry.dispose();
+          }
+          
+          // マテリアルの処理
+          if (Array.isArray(object.material)) {
+            object.material.forEach((material, index) => {
+              disposeMaterial(material, `${object.name || 'unnamed'}_material_${index}`);
+            });
+          } else if (object.material) {
+            disposeMaterial(object.material, `${object.name || 'unnamed'}_material`);
+          }
+          
+          // 親が存在し、シーンそのものでない場合は削除対象に追加
+          if (object.parent && object.parent !== sceneRef.current) {
+            objectsToRemove.push(object);
+          }
+        }
+        
+        // 他の特定のオブジェクトタイプの処理も追加可能
+        // 例: ライト、カメラなど
+      });
+      
+      // 収集したオブジェクトをシーンから削除
+      objectsToRemove.forEach(object => {
+        if (object.parent) {
+          console.log(`オブジェクトを親から削除: ${object.name || 'unnamed object'}`);
+          object.parent.remove(object);
         }
       });
-    } else {
-      console.log("meshesRef is empty - no meshes are loaded");
+      
+      console.log(`シーン内のオブジェクト削除完了。(${objectsToRemove.length}個削除)`);
     }
-  }, [meshVisibility]); // meshesRef.currentは参照が変わらないのでここでは依存に含めない
-
-  //
-  // load objects to the scene
-  //
-
-  const loadModel = (
-    scene: THREE.Scene,
-    materials: Map<string, THREE.Material>,
-    meshes: Map<string, THREE.Mesh>
-  ) => {
-    const loader = new GLTFLoader()
-
-    // 型によって読み込み方法を分岐
-    if (true) {
-      // URLからロード
-      loader.load(
-        'http://localhost:8000/static/TestScene.glb',
-        (gltf) => onModelLoaded(gltf, scene, materials, meshes),
-        (xhr) => {
-          console.log((xhr.loaded / xhr.total * 100) + '% loaded')
-        },
-        (error) => {
-          console.error('GLTFLoader error:', error)
-        }
-      )
-    } else {
-      // JSONオブジェクトから直接ロード
-      loader.parse(
-        JSON.stringify(gltfData.source),
-        '',
-        (gltf) => onModelLoaded(gltf, scene, materials, meshes),
-        (error) => {
-          console.error('GLTFLoader parsing error:', error)
-        }
-      )
+    
+    // メッシュとマテリアルのマップを明示的にクリア
+    console.log(`メッシュマップをクリア（${meshesRef.current.size}個のエントリ）`);
+    meshesRef.current.clear();
+    
+    console.log(`マテリアルマップをクリア（${materialsRef.current.size}個のエントリ）`);
+    materialsRef.current.clear();
+    
+    console.log(`テクスチャマップをクリア（${texturesRef.current.size}個のエントリ）`);
+    texturesRef.current.clear();
+    
+    // メッシュ情報をクリア
+    setMeshInfos([]);
+    
+    console.log('モデルクリア処理が完了しました。');
+  }
+  
+  // マテリアルとそれに関連するリソースを適切に開放するヘルパー関数
+  const disposeMaterial = (material: THREE.Material, name: string) => {
+    console.log(`マテリアルを処理: ${name} (${material.uuid})`);
+    
+    // マテリアルに関連するすべてのテクスチャを処理
+    if (material instanceof THREE.MeshStandardMaterial) {
+      disposeTextureIfExists(material.map, `${name}_map`);
+      disposeTextureIfExists(material.normalMap, `${name}_normalMap`);
+      disposeTextureIfExists(material.roughnessMap, `${name}_roughnessMap`);
+      disposeTextureIfExists(material.metalnessMap, `${name}_metalnessMap`);
+      disposeTextureIfExists(material.aoMap, `${name}_aoMap`);
+      disposeTextureIfExists(material.emissiveMap, `${name}_emissiveMap`);
+    } else if (material instanceof THREE.MeshBasicMaterial) {
+      disposeTextureIfExists(material.map, `${name}_map`);
+    }
+    // 他のマテリアルタイプのハンドリングもここに追加可能
+    
+    // マテリアル自体を破棄
+    material.dispose();
+  }
+  
+  // テクスチャが存在する場合にそれを適切に開放するヘルパー関数
+  const disposeTextureIfExists = (texture: THREE.Texture | null, name: string) => {
+    if (texture) {
+      console.log(`テクスチャを処理: ${name} (${texture.uuid})`);
+      texture.dispose();
     }
   }
 
-  const onModelLoaded = (
-    gltf: GLTF,
-    scene: THREE.Scene,
-    materials: Map<string, THREE.Material>,
-    meshes: Map<string, THREE.Mesh>
-  ) => {
+  // モデルがロードされた時の処理
+  const onModelLoaded = (gltf: GLTF) => {
+    if (!sceneRef.current) return
+    
     const model = gltf.scene
     console.log('GLTF load complete.')
+    
+    // モデルの参照を保存
+    console.log(`gltf.scene: isGroup? = ${model.isGroup}`)
+    modelRef.current = model
 
     const loadedMeshInfos: MeshInfo[] = [];
 
     // collect objects in the GLTF
     model.traverse((object) => {
       if (object instanceof THREE.Mesh) {
-        meshes.set(object.name, object)
+        meshesRef.current.set(object.name, object)
         console.log(`gltf: mesh: ${object.name}`)
 
         let materialName = '';
         if (Array.isArray(object.material)) {
           object.material.forEach((mat, index) => {
             const matName = `${object.name}_material_${index}`;
-            materials.set(matName, mat)
+            materialsRef.current.set(matName, mat)
             console.log(`material: ${matName}`)
+            
+            // マテリアルに関連するテクスチャを追跡
+            trackMaterialTextures(mat, matName);
+            
             if (index === 0) materialName = matName;
           })
         } else {
           const matName = `${object.name}_material`;
-          materials.set(matName, object.material)
+          materialsRef.current.set(matName, object.material)
           console.log(`material: ${matName}`)
+          
+          // マテリアルに関連するテクスチャを追跡
+          trackMaterialTextures(object.material, matName);
+          
           materialName = matName;
         }
 
@@ -271,19 +375,42 @@ const Scene = (sceneProps: SceneProps) => {
         });
       }
     })
+    
+    // マテリアルに関連するテクスチャを追跡するヘルパー関数
+    function trackMaterialTextures(material: THREE.Material, matName: string) {
+      if (material instanceof THREE.MeshStandardMaterial) {
+        trackTextureIfExists(material.map, `${matName}_map`);
+        trackTextureIfExists(material.normalMap, `${matName}_normalMap`);
+        trackTextureIfExists(material.roughnessMap, `${matName}_roughnessMap`);
+        trackTextureIfExists(material.metalnessMap, `${matName}_metalnessMap`);
+        trackTextureIfExists(material.aoMap, `${matName}_aoMap`);
+        trackTextureIfExists(material.emissiveMap, `${matName}_emissiveMap`);
+      } else if (material instanceof THREE.MeshBasicMaterial) {
+        trackTextureIfExists(material.map, `${matName}_map`);
+      }
+      // 他のマテリアルタイプもここに追加可能
+    }
+    
+    // テクスチャを追跡するヘルパー関数
+    function trackTextureIfExists(texture: THREE.Texture | null, name: string) {
+      if (texture) {
+        texturesRef.current.set(name, texture);
+        console.log(`テクスチャを追跡: ${name} (${texture.uuid})`);
+      }
+    }
 
     // メッシュ情報を設定
     setMeshInfos(loadedMeshInfos);
 
     // add to the scene
-    scene.add(model)
+    sceneRef.current.add(model)
     
     // モデルが読み込まれた後で、現在のvisibility設定を適用
     // これは特に重要で、最初のレンダリング時にvisibility設定を反映するために必要
     if (Object.keys(meshVisibility).length > 0) {
       console.log("初期visibilityを適用します:", meshVisibility);
       Object.entries(meshVisibility).forEach(([meshName, isVisible]) => {
-        const mesh = meshes.get(meshName);
+        const mesh = meshesRef.current.get(meshName);
         if (mesh) {
           console.log(`初期状態: メッシュ「${meshName}」のvisibilityを${isVisible ? '表示' : '非表示'}に設定`);
           mesh.visible = isVisible;
@@ -291,6 +418,45 @@ const Scene = (sceneProps: SceneProps) => {
       });
     }
   }
+
+  // メッシュ情報が更新されたときに親コンポーネントに通知
+  useEffect(() => {
+    if (meshInfos.length > 0 && sceneProps.onMeshesLoaded) {
+      sceneProps.onMeshesLoaded(meshInfos);
+    }
+  }, [meshInfos, sceneProps.onMeshesLoaded]);
+
+  // メッシュのvisibilityを監視するuseEffect
+  useEffect(() => {
+    console.log("changed visibility:", meshVisibility);
+    // meshesRef.currentが空でないことを確認
+    if (meshesRef.current.size > 0) {
+      // meshVisibilityが更新されたら、対応するメッシュのvisibilityを変更
+      Object.entries(meshVisibility).forEach(([meshName, isVisible]) => {
+        const mesh = meshesRef.current.get(meshName);
+        if (mesh) {
+          console.log(`mesh "${meshName}" is set to ${isVisible ? 'visible' : 'not visible'}`);
+          mesh.visible = isVisible;
+        } else {
+          console.log(`mesh "${meshName}" is not found`);
+        }
+      });
+    } else {
+      console.log("meshesRef is empty - no meshes are loaded");
+    }
+  }, [meshVisibility]); // meshesRef.currentは参照が変わらないのでここでは依存に含めない
+  
+  // モデルURLまたはリロードトリガーが変更されたときにシーンを再読み込み
+  useEffect(() => {
+    // シーン再読み込み
+    if (sceneRef.current) {
+      console.log(`シーンを再読み込みします。URL: ${modelUrl}, トリガー: ${reloadTrigger}`);
+      // モデルURLが変わる際は、シーン内のすべてのオブジェクトをクリアする
+      // これにより、モデル切り替え時の古いオブジェクト残留問題を解決
+      const shouldClearAllObjects = true;
+      loadModel(shouldClearAllObjects);
+    }
+  }, [modelUrl, reloadTrigger]);
 
   return <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
 }

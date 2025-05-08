@@ -12,5 +12,6 @@ build/
 release/
 external/
 log/
+*.log
 *.xcf
 *.blend*

@@ -1,73 +1,90 @@
-# main.py
-from fastapi import FastAPI, WebSocket
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+import json
 import uvicorn
-import asyncio
+import os
 import random
 
 app = FastAPI()
 
-# CORSミドルウェアを追加
+# CORS設定を追加
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 本番環境では特定のオリジンに制限すべき
+    allow_origins=["*"],  # 本番環境では特定のオリジンのみを許可するように変更すべき
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Static ファイル提供
-app.mount("/static", StaticFiles(directory="./public"), name="static")
+# 静的ファイルの提供
+if os.path.exists("./static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+else:
+    print("Warning: ./static directory doesn't exist. Static files won't be served.")
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_binary(self, data: bytes, websocket: WebSocket):
+        await websocket.send_bytes(data)
+
+    async def send_json(self, data: dict, websocket: WebSocket):
+        await websocket.send_json(data)
+
+    async def send_text(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+manager = ConnectionManager()
 
 @app.get("/")
-async def read_root():
-    return {"message": "FastAPI WebSocket Server"}
+async def get():
+    return {"message": "WebSocket server is running"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
+    await manager.connect(websocket)
     try:
         while True:
-            # クライアントからのメッセージを待機
-            data = await websocket.receive_text()
-            print(f"受信したメッセージ: {data}")
+            # クライアントからメッセージを受信
+            message = await websocket.receive_text()
+            print(f"受信したメッセージ: {message}")
 
-            # データを処理し、バイナリレスポンスを生成
-            binary_response = generate_binary_response(data)
+            # メッセージに応じて異なる処理を行う
+            if message == "request json":
+                # 「request json」を受信した場合、JSONデータを送信
+                json_data = {"test message": "hello"}
+                print(f"JSONデータを送信: {json_data}")
+                await manager.send_json(json_data, websocket)
+            elif message == "new scene1":
+                # 「new scene1」を受信した場合、シーン1へ切り替え指示を送信
+                json_data = {"new scene": "scene1"}
+                print(f"シーン切り替えコマンドを送信: {json_data}")
+                await manager.send_json(json_data, websocket)
+            else:
+                # 通常の応答（ランダムなカラーを送信）
+                # RGBA値をランダムに生成
+                r = random.randint(0, 255)
+                g = random.randint(0, 255)
+                b = random.randint(0, 255)
+                a = random.randint(128, 255)  # 半透明〜不透明
 
-            # バイナリデータをクライアントに送信
-            await websocket.send_bytes(binary_response)
+                # バイナリデータとして送信
+                binary_data = bytes([r, g, b, a])
+                print(f"バイナリデータを送信: RGBA({r}, {g}, {b}, {a})")
+                await manager.send_binary(binary_data, websocket)
 
-            # 次のメッセージを待つ前に少し待機
-            await asyncio.sleep(0.1)
-    except Exception as e:
-        print(f"エラー発生: {str(e)}")
-    finally:
-        # 何らかの理由で接続が閉じられた場合に実行
-        print("WebSocket接続終了")
-
-def generate_binary_response(message: str) -> bytes:
-    """
-    受信したメッセージに基づいてダミーのバイナリデータを生成する
-
-    この例では、メッセージの長さに基づいて異なるバイナリデータを生成
-    """
-    # メッセージの長さに基づいて簡単なバイナリデータを生成
-    message_bytes = message.encode('utf-8')
-
-    # ダミーのバイナリヘッダ (8バイト)
-    header = bytes([0xAA, 0xBB, 0xCC, 0xDD, len(message_bytes) & 0xFF, (len(message_bytes) >> 8) & 0xFF, 0xEE, 0xFF])
-
-    # ランダムなバイナリデータを生成 (0-255の値を持つランダムな10バイト)
-    random_data = bytes([random.randint(0, 255) for _ in range(10)])
-
-    # 元のメッセージとレスポンスを組み合わせる
-    timestamp = bytes([random.randint(0, 255) for _ in range(4)])  # ダミーのタイムスタンプ
-
-    # すべてを連結
-    response = random_data
-    return response
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+        print("クライアントが切断しました")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
