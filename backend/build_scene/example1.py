@@ -155,12 +155,20 @@ def create_example_scene():
 
             # GLTF形式用の画像設定
             # bufferViewとuriの両方を設定 (GLTFはuriを使用、GLBはbufferViewを使用)
-            gltf_image = GLTFImage(
-                bufferView=image_buffer_view_index,
-                uri=image_path,  # GLTF用のURI
-                name="texture",
-                mimeType="image/png"
-            )
+            if gltf_only:
+                # GLTF用 - uriのみ使用
+                gltf_image = GLTFImage(
+                    uri=image_path,
+                    name="texture",
+                    mimeType="image/png"
+                )
+            else:
+                # GLB用 - bufferViewのみ使用
+                gltf_image = GLTFImage(
+                    bufferView=image_buffer_view_index,
+                    name="texture",
+                    mimeType="image/png"
+                )
             gltf.images = [gltf_image]
 
             # サンプラーを追加
@@ -194,7 +202,10 @@ def create_example_scene():
     material = Material(
         name="texture_material",
         pbrMetallicRoughness=pbr,
-        doubleSided=True  # 両面描画を有効に
+        doubleSided=True,  # 両面描画を有効に
+        # 以下のように追加か、alphaCutoffを削除
+        alphaMode="MASK",  # アルファモードをMASKに設定
+        #alphaCutoff=0.5    # カットオフ値（必要な場合）
     )
 
     gltf.materials = [material]
@@ -293,7 +304,12 @@ def create_example_scene():
 
             # GLB用の画像設定を更新 (uriを削除し、bufferViewだけを使用)
             if len(glb_gltf.images) > 0:
-                glb_gltf.images[0].uri = None
+                # uriを完全に削除し、bufferViewのみを使用
+                glb_gltf.images[0] = GLTFImage(
+                    bufferView=glb_gltf.images[0].bufferView,
+                    name=glb_gltf.images[0].name,
+                    mimeType=glb_gltf.images[0].mimeType
+                )
 
             try:
                 # 代替方法でGLBを保存
