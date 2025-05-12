@@ -349,6 +349,9 @@ const Scene = (sceneProps: SceneProps) => {
 
     // collect objects in the GLTF
     model.traverse((object) => {
+      if (object.name) {
+        console.log(`gltf: object: ${object.name}`)
+      }
       if (object instanceof THREE.Mesh) {
         meshesRef.current.set(object.name, object)
         console.log(`gltf: mesh: ${object.name}`)

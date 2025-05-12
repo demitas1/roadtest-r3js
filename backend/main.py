@@ -6,6 +6,9 @@ import uvicorn
 import os
 import random
 
+from build_scene import example1
+
+
 app = FastAPI()
 
 # CORS設定を追加
@@ -67,6 +70,11 @@ async def websocket_endpoint(websocket: WebSocket):
             elif message == "new scene1":
                 # 「new scene1」を受信した場合、シーン1へ切り替え指示を送信
                 json_data = {"new scene": "scene1"}
+                print(f"シーン切り替えコマンドを送信: {json_data}")
+                await manager.send_json(json_data, websocket)
+            elif message == "new scene2":
+                json_data = {"new scene": "scene2"}
+                example1.create_example_scene()
                 print(f"シーン切り替えコマンドを送信: {json_data}")
                 await manager.send_json(json_data, websocket)
             else:

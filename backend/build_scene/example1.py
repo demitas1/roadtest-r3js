@@ -38,8 +38,15 @@ def create_example_scene():
     # 画像ファイルのパス - 直接使用するパス
     image_path = "./static/TestColorGrid.png"  # 実際のファイルパスに変更してください
 
+    # GLTFのみ作成する場合はこれを使用
+    gltf_only = False
+
     # GLTF2オブジェクトを作成
     gltf = GLTF2()
+
+    # アセット情報の追加（必須）
+    gltf.asset.version = "2.0"
+    gltf.asset.generator = "PyGLTFLib Exporter"
 
     # シーンを作成
     scene = Scene()
@@ -115,46 +122,45 @@ def create_example_scene():
     gltf.accessors.extend([accessor_indices, accessor_vertices, accessor_uvs])
 
     # テクスチャ用の画像を設定
+    has_texture = False
+    image_data = None
+
     if os.path.exists(image_path):
-        # 画像を直接使用（一時変換なし）
-        print(f"画像ファイルを直接使用します: {image_path}")
-
-        # 画像を追加
-        gltf_image = GLTFImage(uri=image_path, name="texture")
-        gltf.images = [gltf_image]
-
-        # サンプラーを追加
-        sampler = Sampler(
-            magFilter=9729,  # LINEAR
-            minFilter=9729,  # LINEAR
-            wrapS=10497,     # REPEAT
-            wrapT=10497      # REPEAT
-        )
-        gltf.samplers = [sampler]
-
-        # テクスチャを追加
-        texture = Texture(source=0, sampler=0, name="texture")
-        gltf.textures = [texture]
-
-        has_texture = True
-
-        # ファイルの存在を確認し、詳細を表示
+        # 画像データを読み込む
         try:
-            img = Image.open(image_path)
-            print(f"画像サイズ: {img.size}, フォーマット: {img.format}, モード: {img.mode}")
-            img.close()
+            with open(image_path, 'rb') as f:
+                image_data = f.read()
+
+            print(f"読み込んだ画像データのサイズ: {len(image_data)} バイト")
+            has_texture = True
+
+            # GLTF形式用の画像設定
+            gltf_image = GLTFImage(uri=image_path, name="texture", mimeType="image/png")
+            gltf.images = [gltf_image]
+
+            # サンプラーを追加
+            sampler = Sampler(
+                magFilter=9729,  # LINEAR
+                minFilter=9729,  # LINEAR
+                wrapS=10497,     # REPEAT
+                wrapT=10497      # REPEAT
+            )
+            gltf.samplers = [sampler]
+
+            # テクスチャを追加
+            texture = Texture(source=0, sampler=0, name="texture")
+            gltf.textures = [texture]
         except Exception as e:
-            print(f"画像情報の取得に失敗: {e}")
+            print(f"画像の読み込みエラー: {e}")
+            has_texture = False
     else:
         print(f"警告: 画像ファイル '{image_path}' が見つかりません。テクスチャなしで続行します。")
-        has_texture = False
 
-    # 各三角形に共有マテリアルを作成（テクスチャのみ）
+    # マテリアルを作成（テクスチャのみ - 白色ベースで100%テクスチャを表示）
     pbr = PbrMetallicRoughness(
-        # 完全な白色で設定してテクスチャの色が100%表示されるようにする
-        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
-        metallicFactor=0.0,      # メタリックはゼロ
-        roughnessFactor=0.5      # ラフネスは中間値
+        baseColorFactor=[1.0, 1.0, 1.0, 1.0],  # 白色（テクスチャの色を100%表示）
+        metallicFactor=0.0,                   # メタリックなし
+        roughnessFactor=0.5                   # 標準的なラフネス
     )
 
     if has_texture:
@@ -203,6 +209,9 @@ def create_example_scene():
 
         gltf.nodes.append(node)
 
+    # シーンのノードリストを明示的に設定
+    gltf.scenes[0].nodes = [0]  # ルートノード（インデックス0）をシーンに追加
+
     # バッファにバイナリデータを設定
     # インデックスデータをバイト列に変換
     indices_bytes = indices.tobytes()
@@ -228,19 +237,42 @@ def create_example_scene():
     print(f"バッファビュー数: {len(gltf.bufferViews)}")
     print(f"バッファ数: {len(gltf.buffers)}")
 
-    if hasattr(gltf, 'images') and gltf.images:
-        print(f"画像URI: {gltf.images[0].uri}")
-    if hasattr(gltf, 'materials') and gltf.materials:
-        pbr = gltf.materials[0].pbrMetallicRoughness
-        print(f"マテリアルのbaseColorFactor: {pbr.baseColorFactor}")
-        print(f"マテリアルのテクスチャ設定: {hasattr(pbr, 'baseColorTexture') and pbr.baseColorTexture is not None}")
-
     # 最終的なGLTFを保存
     gltf_path = "./static/textured_triangles.gltf"
     gltf.save(gltf_path)
     print(f"\nGLTFファイルを保存しました: {gltf_path}")
 
-    # GLB形式でも保存
+    # GLB形式での保存方法
     glb_path = "./static/textured_triangles.glb"
-    gltf.save_binary(glb_path)
-    print(f"GLBファイルを保存しました: {glb_path}")
+
+    if gltf_only:
+        # GLBは作成しない
+        print("GLB形式は作成しません")
+    elif has_texture and image_data:
+        # GLB形式で保存（データURIで画像を埋め込む）
+
+        # データURIを使って画像を埋め込む
+        # 現在のGLTFでは画像がパスとして指定されているので、
+        # GLB用に画像をbase64エンコードしたデータURIに変換する
+
+        img_data_uri = f"data:image/png;base64,{base64.b64encode(image_data).decode('ascii')}"
+
+        # GLB用にGLTFをコピー
+        glb_gltf = GLTF2.from_dict(gltf.to_dict())
+
+        # 画像URIをデータURIに変更
+        if len(glb_gltf.images) > 0:
+            glb_gltf.images[0].uri = img_data_uri
+
+        # GLBファイルとして保存
+        glb_gltf.save(glb_path)
+        print(f"テクスチャ埋め込みGLBファイルを保存しました: {glb_path}")
+    else:
+        # テクスチャなしでGLBを保存
+        gltf.save_binary(glb_path)
+        print(f"テクスチャなしGLBファイルを保存しました: {glb_path}")
+
+    return {
+        'gltf_path': gltf_path,
+        'glb_path': glb_path if not gltf_only else None
+    }
