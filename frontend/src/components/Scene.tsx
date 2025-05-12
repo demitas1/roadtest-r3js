@@ -149,27 +149,55 @@ const Scene = (sceneProps: SceneProps) => {
     }
   }, []) // Empty dependency array means this effect runs once on mount
 
+
+  // ファイルの存在確認やURLのチェックを行う関数
+  const checkFileExists = async (url: string): Promise<boolean> => {
+    try {
+      // HEAD リクエストを送信して、ファイルの存在のみを確認
+      console.log(`checking url: ${url}`)
+      const response = await fetch(url, { method: 'HEAD' });
+      return response.ok;
+    } catch (error) {
+      console.error('File existence check failed:', error);
+      return false;
+    }
+  }
+
   // モデルのロード関数
-  const loadModel = (clearAllSceneObjects = false) => {
+  const loadModel = async (clearAllSceneObjects = false) => {
     if (!sceneRef.current) return
 
     // 既存のモデルがあれば削除
     // 引数で指定されたオプションを渡して、シーン内のすべてのオブジェクトをクリアするか決定
     clearCurrentModel(clearAllSceneObjects)
     
-    // URLからモデルをロード
-    const loader = new GLTFLoader()
-    console.log(`モデルをロード中: ${modelUrl}`)
-    loader.load(
-      modelUrl,
-      (gltf) => onModelLoaded(gltf),
-      (xhr) => {
-        console.log((xhr.loaded / xhr.total * 100) + '% loaded')
-      },
-      (error) => {
-        console.error('GLTFLoader error:', error)
-      }
-    )
+    let url = modelUrl;
+    if (url.length === 0) {
+      return;
+    }
+
+    // TODO:
+    // try...catchを使って書き直す
+    // checkFileExsits と GLTFLoader のエラーを一括して catch できるように
+    // GLTFLoader も promise でラップする
+    if (await checkFileExists(modelUrl)) {
+      // URLからモデルをロード
+      const loader = new GLTFLoader()
+      console.log(`モデルをロード中: ${url}`)
+      loader.load(
+        url,
+        (gltf) => onModelLoaded(gltf),
+        (xhr) => {
+          console.log((xhr.loaded / xhr.total * 100) + '% loaded')
+        },
+        (error) => {
+          console.error('GLTFLoader error:', error)
+        }
+      )
+    } else {
+      // not found error
+      console.error(`not found: ${url}`)
+    }
   }
   
   // 現在のモデルをクリアする関数（拡張版）
