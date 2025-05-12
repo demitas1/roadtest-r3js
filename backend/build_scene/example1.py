@@ -7,10 +7,15 @@ from pygltflib import (
     Buffer, BufferView, Accessor, TextureInfo
 )
 import base64
+import warnings
 
 from .constants import *
 
 def create_example_scene():
+    # Suppress specific warnings from dataclasses_json
+    warnings.filterwarnings("ignore", message="'NoneType' object value of non-optional type bufferView detected")
+    warnings.filterwarnings("ignore", message="'NoneType' object value of non-optional type uri detected")
+
     # BufferTargetの値
     ELEMENT_ARRAY_BUFFER = 34963
     ARRAY_BUFFER = 34962
@@ -134,8 +139,28 @@ def create_example_scene():
             print(f"読み込んだ画像データのサイズ: {len(image_data)} バイト")
             has_texture = True
 
+            # 画像データ用のバッファを作成
+            image_buffer = Buffer(byteLength=len(image_data))
+            image_buffer_index = len(gltf.buffers)
+            gltf.buffers.append(image_buffer)
+
+            # 画像データ用のバッファビューを作成
+            image_buffer_view = BufferView(
+                buffer=image_buffer_index,
+                byteOffset=0,
+                byteLength=len(image_data)
+            )
+            image_buffer_view_index = len(gltf.bufferViews)
+            gltf.bufferViews.append(image_buffer_view)
+
             # GLTF形式用の画像設定
-            gltf_image = GLTFImage(uri=image_path, name="texture", mimeType="image/png")
+            # bufferViewとuriの両方を設定 (GLTFはuriを使用、GLBはbufferViewを使用)
+            gltf_image = GLTFImage(
+                bufferView=image_buffer_view_index,
+                uri=image_path,  # GLTF用のURI
+                name="texture",
+                mimeType="image/png"
+            )
             gltf.images = [gltf_image]
 
             # サンプラーを追加
@@ -225,6 +250,10 @@ def create_example_scene():
     uvs_bytes = uvs.tobytes()
     gltf.buffers[2].uri = f"data:application/octet-stream;base64,{base64.b64encode(uvs_bytes).decode('ascii')}"
 
+    # イメージデータをバイト列に変換 (GLTFの場合)
+    if has_texture and image_data:
+        gltf.buffers[image_buffer_index].uri = f"data:application/octet-stream;base64,{base64.b64encode(image_data).decode('ascii')}"
+
     # デバッグ情報を表示
     print("\nGLTF情報:")
     print(f"シーン数: {len(gltf.scenes)}")
@@ -249,28 +278,55 @@ def create_example_scene():
         # GLBは作成しない
         print("GLB形式は作成しません")
     elif has_texture and image_data:
-        # GLB形式で保存（データURIで画像を埋め込む）
+        # GLB形式で保存
 
-        # データURIを使って画像を埋め込む
-        # 現在のGLTFでは画像がパスとして指定されているので、
-        # GLB用に画像をbase64エンコードしたデータURIに変換する
+        # 画像データのバイナリをGLB用に準備
+        try:
+            # 標準的な方法でGLBを保存
+            gltf.save_binary(glb_path)
+            print(f"テクスチャ埋め込みGLBファイルを保存しました: {glb_path}")
+        except Exception as e:
+            print(f"GLB保存エラー: {e}")
 
-        img_data_uri = f"data:image/png;base64,{base64.b64encode(image_data).decode('ascii')}"
+            # 代替方法: GLB用に新しいGLTFオブジェクトを作成
+            glb_gltf = GLTF2.from_dict(gltf.to_dict())
 
-        # GLB用にGLTFをコピー
-        glb_gltf = GLTF2.from_dict(gltf.to_dict())
+            # GLB用の画像設定を更新 (uriを削除し、bufferViewだけを使用)
+            if len(glb_gltf.images) > 0:
+                glb_gltf.images[0].uri = None
 
-        # 画像URIをデータURIに変更
-        if len(glb_gltf.images) > 0:
-            glb_gltf.images[0].uri = img_data_uri
+            try:
+                # 代替方法でGLBを保存
+                glb_gltf.save_binary(glb_path)
+                print(f"代替方法でテクスチャ埋め込みGLBファイルを保存しました: {glb_path}")
+            except Exception as e:
+                print(f"代替GLB保存エラー: {e}")
 
-        # GLBファイルとして保存
-        glb_gltf.save(glb_path)
-        print(f"テクスチャ埋め込みGLBファイルを保存しました: {glb_path}")
+                # 最終手段: 単純なGLB保存
+                try:
+                    # 最もシンプルな方法でGLBを保存
+                    with open(glb_path, 'wb') as f:
+                        f.write(gltf.to_binary())
+                    print(f"最終手段でGLBファイルを保存しました: {glb_path}")
+                except Exception as e:
+                    print(f"最終GLB保存エラー: {e}")
+                    print("GLBの保存に失敗しました")
     else:
         # テクスチャなしでGLBを保存
-        gltf.save_binary(glb_path)
-        print(f"テクスチャなしGLBファイルを保存しました: {glb_path}")
+        try:
+            gltf.save_binary(glb_path)
+            print(f"テクスチャなしGLBファイルを保存しました: {glb_path}")
+        except Exception as e:
+            print(f"テクスチャなしGLB保存エラー: {e}")
+
+            # 代替方法を試す
+            try:
+                with open(glb_path, 'wb') as f:
+                    f.write(gltf.to_binary())
+                print(f"代替方法でテクスチャなしGLBファイルを保存しました: {glb_path}")
+            except Exception as e:
+                print(f"代替テクスチャなしGLB保存エラー: {e}")
+                print("GLBの保存に失敗しました")
 
     return {
         'gltf_path': gltf_path,
