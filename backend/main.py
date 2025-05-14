@@ -6,7 +6,7 @@ import uvicorn
 import os
 import random
 
-from build_scene import example1
+from build_scene import example_scene, convert_to_glb
 
 
 app = FastAPI()
@@ -72,9 +72,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 json_data = {"new scene": "scene1"}
                 print(f"シーン切り替えコマンドを送信: {json_data}")
                 await manager.send_json(json_data, websocket)
-            elif message == "new scene2":
-                json_data = {"new scene": "scene2"}
-                example1.create_example_scene()
+            elif message == "new scene3":
+                json_data = {"new scene": "scene3"}
+                scene = example_scene()
+                convert_to_glb(scene, "./static/output.glb")
                 print(f"シーン切り替えコマンドを送信: {json_data}")
                 await manager.send_json(json_data, websocket)
             else:

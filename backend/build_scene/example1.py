@@ -16,10 +16,6 @@ def create_example_scene():
     warnings.filterwarnings("ignore", message="'NoneType' object value of non-optional type bufferView detected")
     warnings.filterwarnings("ignore", message="'NoneType' object value of non-optional type uri detected")
 
-    # BufferTargetの値
-    ELEMENT_ARRAY_BUFFER = 34963
-    ARRAY_BUFFER = 34962
-
     # 三角形の頂点（Z-up座標系）
     vertices = np.array([
         [0, 0, 0],  # 左下

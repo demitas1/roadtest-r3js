@@ -97,6 +97,18 @@ function App() {
               // シーンの再読み込みをトリガー
               setReloadScene(prev => prev + 1)
               setStatusMessage('シーン2に切り替えました')
+            } else if (jsonData['new scene'] === 'scene3') {
+              console.log('シーン1への切り替えコマンドを受信しました')
+              // 新しいシーンURLを設定
+              setCurrentSceneUrl('http://localhost:8000/static/output.glb')
+              // メッシュ情報をリセット
+              setMeshInfos([])
+              setSelectedMesh(null)
+              setMeshVisibility({})
+              meshesInitializedRef.current = false
+              // シーンの再読み込みをトリガー
+              setReloadScene(prev => prev + 1)
+              setStatusMessage('シーン2に切り替えました')
             }
             // 色情報の処理
             else if (jsonData.color) {

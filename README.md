@@ -34,6 +34,8 @@ Road shape plotting tool.
 cd backend
 python -m venv venv
 source venv/bin/activate
+
+pip install trimesh[easy]
 pip install -r requirements.txt
 ```
 

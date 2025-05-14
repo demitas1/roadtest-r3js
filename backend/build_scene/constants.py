@@ -1,3 +1,6 @@
+# BufferTargetの値
+ELEMENT_ARRAY_BUFFER = 34963
+ARRAY_BUFFER = 34962
 
 # ComponentTypeの値
 BYTE = 5120
