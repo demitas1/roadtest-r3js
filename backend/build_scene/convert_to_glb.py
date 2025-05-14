@@ -3,21 +3,23 @@ import numpy as np
 from PIL import Image
 import struct
 import io
+import os
+import json
 from pygltflib import GLTF2, Asset, Scene, Node, Mesh, Primitive, Attributes
 from pygltflib import Buffer, BufferView, Accessor, Material, PbrMetallicRoughness
 from pygltflib import Texture, Sampler, Image as GLTFImage, TextureInfo
 
-
 from .constants import *
 
 
-def convert_to_glb(scene, output_path="./static/output.glb"):
+def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     """
     trimeshのシーンをGLBファイルに変換する
 
     Args:
         scene (trimesh.Scene): 変換するtrimeshシーン
         output_path (str): 出力するGLBファイルのパス
+        debug (bool): デバッグ情報を出力するかどうか
 
     Returns:
         {
@@ -28,9 +30,22 @@ def convert_to_glb(scene, output_path="./static/output.glb"):
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
     custom_transforms = scene.metadata.get('custom_transforms', {})
 
-    print("\nConverting using custom hierarchy:")
-    for node, parent in custom_hierarchy.items():
-        print(f"Node: {node}, Parent: {parent}")
+    if debug:
+        print("\nConverting using custom hierarchy:")
+        for node, parent in custom_hierarchy.items():
+            print(f"Node: {node}, Parent: {parent}")
+
+        print("\nScene graph nodes:")
+        for node in scene.graph.nodes:
+            print(f"- {node}")
+
+        print("\nScene graph nodes_geometry:")
+        for node in scene.graph.nodes_geometry:
+            print(f"- {node}")
+
+        print("\nScene geometry keys:")
+        for key in scene.geometry.keys():
+            print(f"- {key}")
 
     # シーンからメッシュ情報を取得
     meshes = {}
@@ -50,7 +65,8 @@ def convert_to_glb(scene, output_path="./static/output.glb"):
 
             # 空のメッシュの場合は構造ノードとして扱う
             if len(vertices) == 0 or len(faces) == 0:
-                print(f"Info: Node '{node_name}' has no geometry, treating as structure node")
+                if debug:
+                    print(f"Info: Node '{node_name}' has no geometry, treating as structure node")
                 structure_nodes.add(node_name)
                 continue
 
@@ -86,16 +102,139 @@ def convert_to_glb(scene, output_path="./static/output.glb"):
         if node_name not in scene.graph.nodes_geometry:
             structure_nodes.add(node_name)
 
+    if debug:
+        print("\nStructure nodes (non-mesh):")
+        for node in structure_nodes:
+            print(f"- {node}")
+
+        print("\nMesh nodes:")
+        for node in mesh_names:
+            print(f"- {node}")
+
     # メッシュノードが存在するか確認
     if not mesh_names:
-        #raise ValueError("No valid meshes found in the scene. All meshes were empty or invalid.")
-        print("No valid meshes found in the scene. All meshes were empty or invalid.")
+        if debug:
+            print("No valid meshes found in the scene. Creating a nodes-only GLTF file.")
 
+        # メッシュが存在しない場合、pygltflibを使わずに直接GLTFを作成
+        # これにより、バッファなしの純粋なノード構造のGLTFを生成
+
+        # GLTF構造を手動で構築
+        gltf_json = {
+            "asset": {
+                "version": "2.0"
+            },
+            "scene": 0,
+            "scenes": [
+                {
+                    "name": "Scene",
+                    "nodes": []  # ルートノードのインデックスをここに追加
+                }
+            ],
+            "nodes": []  # ノード情報をここに追加
+        }
+
+        # ノード情報を追加
+        nodes_dict = {}  # ノード名とインデックスのマッピング
+        node_index = 0
+
+        for node_name in structure_nodes:
+            # カスタム変換行列を取得
+            if node_name in custom_transforms:
+                transform = custom_transforms[node_name]
+            else:
+                transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
+
+            # 変換を分解: 平行移動、回転、スケールに
+            translation = transform[:3, 3].tolist()
+
+            # デフォルトの回転とスケール
+            rotation = [0.0, 0.0, 0.0, 1.0]
+            scale = [1.0, 1.0, 1.0]
+
+            # ノード情報を追加
+            node_info = {
+                "name": node_name,
+                "translation": translation,
+                "rotation": rotation,
+                "scale": scale
+            }
+
+            gltf_json["nodes"].append(node_info)
+            nodes_dict[node_name] = node_index
+            node_index += 1
+
+        # 親子関係を設定
+        for node_name, parent_name in custom_hierarchy.items():
+            if parent_name is not None and parent_name in nodes_dict and node_name in nodes_dict:
+                parent_index = nodes_dict[parent_name]
+                child_index = nodes_dict[node_name]
+
+                # 親ノードの子リストを更新
+                if "children" not in gltf_json["nodes"][parent_index]:
+                    gltf_json["nodes"][parent_index]["children"] = []
+
+                # 既に子リストに追加されていない場合のみ追加
+                if child_index not in gltf_json["nodes"][parent_index]["children"]:
+                    gltf_json["nodes"][parent_index]["children"].append(child_index)
+                    if debug:
+                        print(f"Added node '{node_name}' (index {child_index}) as child of '{parent_name}' (index {parent_index})")
+
+        # ルートノードをシーンに追加
+        root_nodes = []
+        for node_name in structure_nodes:
+            if node_name in custom_hierarchy and custom_hierarchy[node_name] is None:
+                if node_name in nodes_dict:
+                    root_node_index = nodes_dict[node_name]
+                    root_nodes.append(root_node_index)
+                    if debug:
+                        print(f"Added root node: '{node_name}' (index {root_node_index})")
+
+        # ルートノードがない場合、最初のノードをルートとして使用
+        if not root_nodes and len(gltf_json["nodes"]) > 0:
+            if debug:
+                print("Warning: No root nodes found. Using the first node as root.")
+            root_nodes = [0]
+
+        # ルートノードをシーンに設定
+        gltf_json["scenes"][0]["nodes"] = root_nodes
+
+        # ノード階層を出力（デバッグ用）
+        if debug:
+            print("\nGLTF Node Hierarchy:")
+            for i, node in enumerate(gltf_json["nodes"]):
+                children = node.get("children", [])
+                children_str = ', '.join([f"{c} ({gltf_json['nodes'][c]['name']})" for c in children]) if children else "none"
+                print(f"Node {i} ({node['name']}): children = [{children_str}]")
+
+            print(f"\nRoot nodes: {root_nodes}")
+
+        # GLBファイルの出力
+        # GLBはJSON部分のみのファイルとなる
+        if output_path.endswith('.glb'):
+            # GLBの代わりにGLTFを出力
+            gltf_path = output_path.replace('.glb', '.gltf')
+        else:
+            gltf_path = output_path + '.gltf'
+
+        # GLTFファイルとして保存
+        with open(gltf_path, 'w', encoding='utf-8') as f:
+            json.dump(gltf_json, f, indent=2)
+
+        if debug:
+            print(f"Nodes-only GLTFファイルを生成しました: {gltf_path}")
+
+        return {
+            'glb_path': gltf_path  # 注意: 実際にはGLTFファイル
+        }
+
+    # ここから先はメッシュがある場合の処理（元の関数と同じ）
     # テクスチャが存在しないメッシュ用のダミーテクスチャ作成
     for node_name in mesh_names:
         if node_name not in texture_images:
             # ダミーテクスチャを作成して保存
-            print(f"Info: Creating dummy texture for mesh '{node_name}'")
+            if debug:
+                print(f"Info: Creating dummy texture for mesh '{node_name}'")
             dummy_texture = Image.new('RGB', (2, 2), color='white')
             texture_images[node_name] = dummy_texture
 
@@ -243,7 +382,8 @@ def convert_to_glb(scene, output_path="./static/output.glb"):
             # 既に子リストに追加されていない場合のみ追加
             if child_index not in gltf.nodes[parent_index].children:
                 gltf.nodes[parent_index].children.append(child_index)
-                print(f"Added node '{node_name}' (index {child_index}) as child of '{parent_name}' (index {parent_index})")
+                if debug:
+                    print(f"Added node '{node_name}' (index {child_index}) as child of '{parent_name}' (index {parent_index})")
 
     # ルートノードをシーンに追加
     # カスタム階層から親がないノードを特定
@@ -253,21 +393,24 @@ def convert_to_glb(scene, output_path="./static/output.glb"):
             if node_name in nodes_dict:
                 root_node_index = nodes_dict[node_name]
                 root_nodes.append(root_node_index)
-                print(f"Added root node: '{node_name}' (index {root_node_index})")
+                if debug:
+                    print(f"Added root node: '{node_name}' (index {root_node_index})")
 
     # ルートノードがない場合、最初のノードをルートとして使用
     if not root_nodes and len(gltf.nodes) > 0:
-        print("Warning: No root nodes found. Using the first node as root.")
+        if debug:
+            print("Warning: No root nodes found. Using the first node as root.")
         root_nodes = [0]
 
-    # デバッグ: ノード階層を出力
-    print("\nGLTF Node Hierarchy:")
-    for i, node in enumerate(gltf.nodes):
-        children = getattr(node, 'children', [])
-        children_str = ', '.join([f"{c} ({gltf.nodes[c].name})" for c in children]) if children else "none"
-        print(f"Node {i} ({node.name}): children = [{children_str}]")
+    if debug:
+        # デバッグ: ノード階層を出力
+        print("\nGLTF Node Hierarchy:")
+        for i, node in enumerate(gltf.nodes):
+            children = getattr(node, 'children', [])
+            children_str = ', '.join([f"{c} ({gltf.nodes[c].name})" for c in children]) if children else "none"
+            print(f"Node {i} ({node.name}): children = [{children_str}]")
 
-    print(f"\nRoot nodes: {root_nodes}")
+        print(f"\nRoot nodes: {root_nodes}")
 
     gltf.scenes[0].nodes = root_nodes
 
@@ -432,7 +575,8 @@ def convert_to_glb(scene, output_path="./static/output.glb"):
 
     # GLBとして保存
     gltf.save(output_path)
-    print(f"GLBファイルを生成しました: {output_path}")
+    if debug:
+        print(f"GLBファイルを生成しました: {output_path}")
 
     return {
         'glb_path': output_path
