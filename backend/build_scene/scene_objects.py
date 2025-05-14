@@ -40,7 +40,15 @@ def empty_scene():
     return scene
 
 
-def add_mesh_triangle(scene, name, texture_path, position=None, parent_node=None):
+def add_mesh_triangle(
+        scene,
+        name,
+        vertices,
+        faces,
+        uvs,
+        texture_path,
+        position=None,
+        parent_node=None):
     """
     三角形のメッシュをシーンに追加する
 
@@ -64,24 +72,10 @@ def add_mesh_triangle(scene, name, texture_path, position=None, parent_node=None
     # ビットマップをテクスチャ用に読み込む
     texture_img = Image.open(texture_path)
 
+    # TODO: 検査
     # 頂点座標を設定
-    vertices = np.array([
-        [0, 0, 0],  # 頂点0
-        [0, 1, 0],  # 頂点1
-        [1, 0, 0]   # 頂点2
-    ], dtype=np.float32)
-
     # 面を設定（三角形1つ）
-    faces = np.array([
-        [0, 2, 1]  # 頂点0, 1, 2を結ぶ三角形
-    ])
-
     # UV座標を設定
-    uvs = np.array([
-        [0, 0],  # 頂点0のUV: 左下
-        [0, 1],  # 頂点1のUV: 左上
-        [1, 0]   # 頂点2のUV: 右下
-    ], dtype=np.float32)
 
     # trimeshでメッシュを生成
     visual = trimesh.visual.TextureVisuals(uv=uvs, image=texture_img)
@@ -124,6 +118,24 @@ def example_scene():
     scene = add_mesh_triangle(
         scene=scene,
         name='triangle1',
+        # trimesh は +Y up
+        vertices = np.array([
+            [0, 0, 0],  # 頂点0
+            [0, 1, 0],  # 頂点1
+            [1, 0, 0],  # 頂点2
+            [1, 1, 0],  # 頂点3
+        ], dtype=np.float32),
+        faces = np.array([
+            [0, 2, 1],
+            [1, 2, 3],
+        ]),
+        # trimesh では v=0 が画像の上端となる?
+        uvs = np.array([
+            [0, 0],  # 頂点0のUV: 左下
+            [0, 1],  # 頂点1のUV: 左上
+            [1, 0],  # 頂点2のUV: 右下
+            [1, 1],  # 頂点2のUV: 右上
+        ], dtype=np.float32),
         texture_path='./static/TestColorGrid.png',
         position=[0, 0, 0],
         parent_node='world'
@@ -133,6 +145,22 @@ def example_scene():
     scene = add_mesh_triangle(
         scene=scene,
         name='triangle2',
+        vertices = np.array([
+            [0, 0, 0],  # 頂点0
+            [0, 1, 0],  # 頂点1
+            [1, 0, 0],  # 頂点2
+            [1, 1, 0],  # 頂点3
+        ], dtype=np.float32),
+        faces = np.array([
+            [0, 2, 1],
+            [1, 2, 3],
+        ]),
+        uvs = np.array([
+            [0, 0],  # 頂点0のUV: 左下
+            [0, 1],  # 頂点1のUV: 左上
+            [1, 0],  # 頂点2のUV: 右下
+            [1, 1],  # 頂点2のUV: 右上
+        ], dtype=np.float32),
         texture_path='./static/TestPicture.png',
         position=[1.0, 1.0, 0.0],
         parent_node='triangle1'

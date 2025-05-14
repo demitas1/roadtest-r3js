@@ -260,7 +260,10 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         # UVデータ
         uv_data[mesh_name] = bytearray()
         for uv in meshes[mesh_name]['uvs']:
-            uv_data[mesh_name].extend(struct.pack('ff', *uv))
+            # UV座標のY成分（V成分）を反転
+            # trimesh内部ではPIL.Imageを参照しているのでテクスチャの+Vが逆
+            flipped_uv = [uv[0], 1.0 - uv[1]]
+            uv_data[mesh_name].extend(struct.pack('ff', *flipped_uv))
 
         # 画像データ
         if mesh_name in texture_images and texture_images[mesh_name] is not None:

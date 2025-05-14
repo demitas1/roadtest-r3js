@@ -87,28 +87,21 @@ function App() {
               setStatusMessage('シーン1に切り替えました')
             } else if (jsonData['new scene'] === 'scene2') {
               console.log('シーン1への切り替えコマンドを受信しました')
-              // 新しいシーンURLを設定
-              setCurrentSceneUrl('http://localhost:8000/static/textured_triangles.glb')
-              // メッシュ情報をリセット
-              setMeshInfos([])
-              setSelectedMesh(null)
-              setMeshVisibility({})
-              meshesInitializedRef.current = false
-              // シーンの再読み込みをトリガー
-              setReloadScene(prev => prev + 1)
-              setStatusMessage('シーン2に切り替えました')
-            } else if (jsonData['new scene'] === 'scene3') {
-              console.log('シーン1への切り替えコマンドを受信しました')
-              // 新しいシーンURLを設定
-              setCurrentSceneUrl('http://localhost:8000/static/output.glb')
-              // メッシュ情報をリセット
-              setMeshInfos([])
-              setSelectedMesh(null)
-              setMeshVisibility({})
-              meshesInitializedRef.current = false
-              // シーンの再読み込みをトリガー
-              setReloadScene(prev => prev + 1)
-              setStatusMessage('シーン2に切り替えました')
+              if ("glb_path" in jsonData) {
+                // 新しいシーンURLを設定
+                const glbPath: string = jsonData["glb_path"];
+                const sceneUrl: string = `http://localhost:8000/${glbPath}`;
+                console.log(`new scene url: ${sceneUrl}`);
+                setCurrentSceneUrl('http://localhost:8000/static/output.glb')
+                // メッシュ情報をリセット
+                setMeshInfos([])
+                setSelectedMesh(null)
+                setMeshVisibility({})
+                meshesInitializedRef.current = false
+                // シーンの再読み込みをトリガー
+                setReloadScene(prev => prev + 1)
+                setStatusMessage('シーン2に切り替えました')
+              }
             }
             // 色情報の処理
             else if (jsonData.color) {

@@ -72,10 +72,12 @@ async def websocket_endpoint(websocket: WebSocket):
                 json_data = {"new scene": "scene1"}
                 print(f"シーン切り替えコマンドを送信: {json_data}")
                 await manager.send_json(json_data, websocket)
-            elif message == "new scene3":
-                json_data = {"new scene": "scene3"}
+            elif message == "new scene2":
+                json_data = {"new scene": "scene2"}
                 scene = example_scene()
-                convert_to_glb(scene, "./static/output.glb")
+                r = convert_to_glb(scene, "static/output.glb")
+                if "glb_path" in r.keys():
+                    json_data["glb_path"] = r["glb_path"]
                 print(f"シーン切り替えコマンドを送信: {json_data}")
                 await manager.send_json(json_data, websocket)
             else:
