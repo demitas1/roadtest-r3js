@@ -86,10 +86,10 @@ function App() {
               setReloadScene(prev => prev + 1)
               setStatusMessage('シーン1に切り替えました')
             } else if (jsonData['new scene'] === 'scene2') {
-              console.log('シーン1への切り替えコマンドを受信しました')
-              if ("glb_path" in jsonData) {
+              console.log(`コマンドを受信しました ${jsonData}`)
+              if ("gltf_path" in jsonData) {
                 // 新しいシーンURLを設定
-                const glbPath: string = jsonData["glb_path"];
+                const glbPath: string = jsonData["gltf_path"];
                 const sceneUrl: string = `http://localhost:8000/${glbPath}`;
                 console.log(`new scene url: ${sceneUrl}`);
                 setCurrentSceneUrl('http://localhost:8000/static/output.glb')

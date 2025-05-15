@@ -12,6 +12,30 @@ from pygltflib import Texture, Sampler, Image as GLTFImage, TextureInfo
 from .constants import *
 
 
+# 各ノードのジオメトリを探索関数
+def find_geometry_for_node(scene, node_name):
+    """ノード名に対応するジオメトリを探す関数"""
+    # 1. 直接ノード名でジオメトリを探す
+    if node_name in scene.geometry:
+        return node_name, scene.geometry[node_name]
+
+    # 2. UUIDを使ってジオメトリを探す
+    dict_name_to_uuid = scene.metadata.get('name_to_uuid', {})
+    if node_name in dict_name_to_uuid:
+        node_uuid = dict_name_to_uuid[node_name]
+
+        # scene.geometryの全ジオメトリをチェック
+        for geom_key, geometry in scene.geometry.items():
+            # ジオメトリのメタデータにUUIDがあるか確認
+            if hasattr(geometry, 'metadata') and 'uuid' in geometry.metadata:
+                if geometry.metadata['uuid'] == node_uuid:
+                    print(f"Found geometry for node '{node_name}' using UUID: {node_uuid}")
+                    return geom_key, geometry
+
+    # ジオメトリが見つからなかった
+    return None, None
+
+
 def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     """
     trimeshのシーンをGLBファイルに変換する
@@ -23,7 +47,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
     Returns:
         {
-            'glb_path': 保存されたGLBファイルのパス
+            'gltf_path': 保存されたGLB/GLTFファイルのパス
         }
     """
     # カスタム階層情報を取得（存在する場合）
@@ -47,18 +71,30 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         for key in scene.geometry.keys():
             print(f"- {key}")
 
+        print("\nScene node UUID:")
+        dict_uuid_to_name = scene.metadata.get('uuid_to_name', {})
+        for geom_uuid, node_name in dict_uuid_to_name.items():
+            print(f"uuid {geom_uuid}: {node_name}")
+        dict_name_to_uuid = scene.metadata.get('name_to_uuid', {})
+        for node_name, geom_uuid in dict_name_to_uuid.items():
+            print(f"node name {node_name}: {geom_uuid}")
+
     # シーンからメッシュ情報を取得
     meshes = {}
     mesh_names = []  # メッシュ名のリストを保持する配列
     texture_images = {}  # メッシュ名をキーとした画像データを保持する辞書
+    # TODO: PBRマテリアルに対応
 
     # 構造ノード（メッシュがないノード）のセット
     structure_nodes = set()
 
+    # TODO: scene.graphではなくscene.geometryをtraverseするべきか？
+    #       現在のコードは名前の衝突を考慮していない
     for node_name in scene.graph.nodes_geometry:
-        if node_name in scene.geometry:
-            mesh = scene.geometry[node_name]
+        # ノードに対応するジオメトリを探す
+        geom_key, mesh = find_geometry_for_node(scene, node_name)
 
+        if mesh is not None:
             # 頂点座標、面情報、UV座標を取得
             vertices = mesh.vertices.astype(np.float32)
             faces = mesh.faces
@@ -96,10 +132,9 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 'uvs': uvs,
                 'mesh_obj': mesh
             }
-
-    # シーングラフの他のノード（メッシュのないノード）も追加
-    for node_name in scene.graph.nodes:
-        if node_name not in scene.graph.nodes_geometry:
+        else:
+            # シーングラフの他のノード（メッシュのないノード）も追加
+            print(f"Info: Node '{node_name}' has no corresponding geometry, treating as structure node")
             structure_nodes.add(node_name)
 
     if debug:
@@ -116,10 +151,10 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         if debug:
             print("No valid meshes found in the scene. Creating a nodes-only GLTF file.")
 
-        # メッシュが存在しない場合、pygltflibを使わずに直接GLTFを作成
-        # これにより、バッファなしの純粋なノード構造のGLTFを生成
+        # バイナリバッファが一つもない場合GLBを作成できないので
+        # pygltflibを使わずに直接バッファなしの純粋なノード構造のGLTFを生成
 
-        # GLTF構造を手動で構築
+        # GLTF構造を構築
         gltf_json = {
             "asset": {
                 "version": "2.0"
@@ -225,10 +260,11 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             print(f"Nodes-only GLTFファイルを生成しました: {gltf_path}")
 
         return {
-            'glb_path': gltf_path  # 注意: 実際にはGLTFファイル
+            'gltf_path': gltf_path
         }
 
-    # ここから先はメッシュがある場合の処理（元の関数と同じ）
+    # 以降はバイナリバッファがある場合の処理
+
     # テクスチャが存在しないメッシュ用のダミーテクスチャ作成
     for node_name in mesh_names:
         if node_name not in texture_images:
@@ -582,5 +618,5 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         print(f"GLBファイルを生成しました: {output_path}")
 
     return {
-        'glb_path': output_path
+        'gltf_path': output_path
     }
