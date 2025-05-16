@@ -45,6 +45,66 @@ def empty_scene():
     return scene
 
 
+def add_mesh(
+        scene,
+        name,
+        mesh,
+        position=None,
+        parent_node=None):
+    """
+    trimesh メッシュをシーンに追加する
+
+    Args:
+        scene (trimesh.Scene): メッシュを追加するシーン
+        name (str): メッシュの名前
+        mesh (trimesh.Trimesh): メッシュ
+        position (list, optional): [x, y, z]の位置。Noneの場合は[0, 0, 0]
+        parent_node (str, optional): 親ノードの名前。Noneの場合は'world'
+
+    Returns:
+        trimesh.Scene: 更新されたシーン
+    """
+    # デフォルト値の設定
+    if position is None:
+        position = [0, 0, 0]
+
+    if parent_node is None:
+        parent_node = 'world'
+
+    # metadata
+    mesh.metadata['name'] = name
+
+    # UUIDを付与してシーンに追加
+    mesh_uuid = str(uuid.uuid4())
+    mesh.metadata['uuid'] = mesh_uuid
+    scene.add_geometry(mesh, node_name=name)
+    if 'uuid_to_name' not in scene.metadata:
+        scene.metadata['uuid_to_name'] = {}
+    if 'name_to_uuid' not in scene.metadata:
+        scene.metadata['name_to_uuid'] = {}
+    scene.metadata['uuid_to_name'][mesh_uuid] = name
+    scene.metadata['name_to_uuid'][name] = mesh_uuid
+
+    # 変換行列を準備
+    # TODO: 引数にする
+    transform = np.eye(4)
+    transform[:3, 3] = position  # X,Y,Z方向の移動
+
+    # 既存のメタデータを取得
+    custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
+    custom_transforms = scene.metadata.get('custom_transforms', {})
+
+    # 親子関係と変換を更新
+    custom_hierarchy[name] = parent_node
+    custom_transforms[name] = transform
+
+    # シーンのメタデータに保存し直す
+    scene.metadata['custom_hierarchy'] = custom_hierarchy
+    scene.metadata['custom_transforms'] = custom_transforms
+
+    return scene
+
+
 def add_mesh_triangle(
         scene,
         name,
@@ -70,13 +130,6 @@ def add_mesh_triangle(
     Returns:
         trimesh.Scene: 更新されたシーン
     """
-    # デフォルト値の設定
-    if position is None:
-        position = [0, 0, 0]
-
-    if parent_node is None:
-        parent_node = 'world'
-
     # ビットマップをテクスチャ用に読み込む
     texture_img = Image.open(texture_path)
 
@@ -90,34 +143,8 @@ def add_mesh_triangle(
     triangle_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     triangle_mesh.metadata['name'] = name
 
-    # UUIDを付与してシーンに追加
-    mesh_uuid = str(uuid.uuid4())
-    triangle_mesh.metadata['uuid'] = mesh_uuid
-    scene.add_geometry(triangle_mesh, node_name=name)
-    if 'uuid_to_name' not in scene.metadata:
-        scene.metadata['uuid_to_name'] = {}
-    if 'name_to_uuid' not in scene.metadata:
-        scene.metadata['name_to_uuid'] = {}
-    scene.metadata['uuid_to_name'][mesh_uuid] = name
-    scene.metadata['name_to_uuid'][name] = mesh_uuid
+    return add_mesh(scene, name, triangle_mesh, position, parent_node)
 
-    # 変換行列を準備
-    transform = np.eye(4)
-    transform[:3, 3] = position  # X,Y,Z方向の移動
-
-    # 既存のメタデータを取得
-    custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
-    custom_transforms = scene.metadata.get('custom_transforms', {})
-
-    # 親子関係と変換を更新
-    custom_hierarchy[name] = parent_node
-    custom_transforms[name] = transform
-
-    # シーンのメタデータに保存し直す
-    scene.metadata['custom_hierarchy'] = custom_hierarchy
-    scene.metadata['custom_transforms'] = custom_transforms
-
-    return scene
 
 def add_mesh_triangle_no_image(
         scene,
@@ -213,34 +240,7 @@ def add_mesh_triangle_no_image(
     #       occlusionTexture=trimesh.visual.texture.Texture(...),
     #       emissiveTexture=trimesh.visual.texture.Texture(...)
 
-    # UUIDを付与してシーンに追加
-    mesh_uuid = str(uuid.uuid4())
-    triangle_mesh.metadata['uuid'] = mesh_uuid
-    scene.add_geometry(triangle_mesh, node_name=name)
-    if 'uuid_to_name' not in scene.metadata:
-        scene.metadata['uuid_to_name'] = {}
-    if 'name_to_uuid' not in scene.metadata:
-        scene.metadata['name_to_uuid'] = {}
-    scene.metadata['uuid_to_name'][mesh_uuid] = name
-    scene.metadata['name_to_uuid'][name] = mesh_uuid
-
-    # 変換行列を準備
-    transform = np.eye(4)
-    transform[:3, 3] = position  # X,Y,Z方向の移動
-
-    # 既存のメタデータを取得
-    custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
-    custom_transforms = scene.metadata.get('custom_transforms', {})
-
-    # 親子関係と変換を更新
-    custom_hierarchy[name] = parent_node
-    custom_transforms[name] = transform
-
-    # シーンのメタデータに保存し直す
-    scene.metadata['custom_hierarchy'] = custom_hierarchy
-    scene.metadata['custom_transforms'] = custom_transforms
-
-    return scene
+    return add_mesh(scene, name, triangle_mesh, position, parent_node)
 
 
 def example_scene():

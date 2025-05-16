@@ -12,30 +12,6 @@ from pygltflib import Texture, Sampler, Image as GLTFImage, TextureInfo
 from .constants import *
 
 
-# 各ノードのジオメトリを探索関数
-def find_geometry_for_node(scene, node_name):
-    """ノード名に対応するジオメトリを探す関数"""
-    # 1. 直接ノード名でジオメトリを探す
-    if node_name in scene.geometry:
-        return node_name, scene.geometry[node_name]
-
-    # 2. UUIDを使ってジオメトリを探す
-    dict_name_to_uuid = scene.metadata.get('name_to_uuid', {})
-    if node_name in dict_name_to_uuid:
-        node_uuid = dict_name_to_uuid[node_name]
-
-        # scene.geometryの全ジオメトリをチェック
-        for geom_key, geometry in scene.geometry.items():
-            # ジオメトリのメタデータにUUIDがあるか確認
-            if hasattr(geometry, 'metadata') and 'uuid' in geometry.metadata:
-                if geometry.metadata['uuid'] == node_uuid:
-                    print(f"Found geometry for node '{node_name}' using UUID: {node_uuid}")
-                    return geom_key, geometry
-
-    # ジオメトリが見つからなかった
-    return None, None
-
-
 def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     """
     trimeshのシーンをGLBファイルに変換する
@@ -53,6 +29,8 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     # カスタム階層情報を取得（存在する場合）
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
     custom_transforms = scene.metadata.get('custom_transforms', {})
+    dict_uuid_to_name = scene.metadata.get('uuid_to_name', {})
+    dict_name_to_uuid = scene.metadata.get('name_to_uuid', {})
 
     if debug:
         print("\nConverting using custom hierarchy:")
@@ -67,17 +45,20 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         for node in scene.graph.nodes_geometry:
             print(f"- {node}")
 
-        print("\nScene geometry keys:")
-        for key in scene.geometry.keys():
-            print(f"- {key}")
-
         print("\nScene node UUID:")
-        dict_uuid_to_name = scene.metadata.get('uuid_to_name', {})
         for geom_uuid, node_name in dict_uuid_to_name.items():
             print(f"uuid {geom_uuid}: {node_name}")
-        dict_name_to_uuid = scene.metadata.get('name_to_uuid', {})
         for node_name, geom_uuid in dict_name_to_uuid.items():
             print(f"node name {node_name}: {geom_uuid}")
+
+        # scene.geometryの全ジオメトリをチェック
+        print("\nScene geometries:")
+        for geom_key, geometry in scene.geometry.items():
+            # ジオメトリのメタデータにUUIDがあるか確認
+            if hasattr(geometry, 'metadata') and 'uuid' in geometry.metadata:
+                geom_uuid = geometry.metadata['uuid']
+                node_name = dict_uuid_to_name[geom_uuid]
+                print(f"geometry key {geom_key}: uuid {geom_uuid}: node name: {node_name}")
 
     # シーンからメッシュ情報を取得
     meshes = {}
@@ -88,11 +69,20 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     # 構造ノード（メッシュがないノード）のセット
     structure_nodes = set()
 
-    # TODO: scene.graphではなくscene.geometryをtraverseするべきか？
-    #       現在のコードは名前の衝突を考慮していない
-    for node_name in scene.graph.nodes_geometry:
-        # ノードに対応するジオメトリを探す
-        geom_key, mesh = find_geometry_for_node(scene, node_name)
+    # TODO: 現在のコードは名前の衝突を考慮していない
+    # TODO: 名前からオブジェクトを引くのではなく、uuidを使用してマップを作る
+
+    for geom_key, mesh in scene.geometry.items():
+        # ジオメトリ名はtrimeshによって変更される可能性があるので
+        # uuidが一致するメッシュを探し、その名前（ユーザーによってつけられた名前）を得る
+        # TODO: geometryはmeshとは限らないのでは？
+        if hasattr(mesh, 'metadata') and 'uuid' in mesh.metadata:
+            geom_uuid = mesh.metadata['uuid']
+            node_name = dict_uuid_to_name.get(geom_uuid, None)
+        else:
+            # TODO: uuidを持っていないものがあれば、その場で付与するべき？
+            geom_uuid = None
+            node_name = geom_key
 
         if mesh is not None:
             # 頂点座標、面情報、UV座標を取得
@@ -107,6 +97,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 continue
 
             # メッシュ名を追加
+            # TODO: 現在のコードは名前の衝突を考慮していない
             mesh_names.append(node_name)
 
             # UV座標の取得
@@ -117,6 +108,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 uvs = np.zeros((len(vertices), 2), dtype=np.float32)
 
             # テクスチャ画像の取得
+            # TODO: PBR Material への対応
             if hasattr(mesh.visual, 'material') and hasattr(mesh.visual.material, 'image'):
                 image = mesh.visual.material.image
                 texture_images[node_name] = image
@@ -126,6 +118,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 if hasattr(texture, 'image'):
                     texture_images[node_name] = texture.image
 
+            # TODO: 現在のコードは名前の衝突を考慮していない
             meshes[node_name] = {
                 'vertices': vertices,
                 'faces': faces,
@@ -135,6 +128,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         else:
             # シーングラフの他のノード（メッシュのないノード）も追加
             print(f"Info: Node '{node_name}' has no corresponding geometry, treating as structure node")
+            # TODO: 現在のコードは名前の衝突を考慮していない
             structure_nodes.add(node_name)
 
     if debug:
