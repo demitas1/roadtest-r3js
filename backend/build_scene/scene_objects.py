@@ -35,8 +35,6 @@ def empty_scene():
     # trimeshがgeometryにnodeとは異なる名称を付与する場合があるのでトラックする目的
     scene.metadata['uuid_to_name'] = {}
     scene.metadata['uuid_to_name'][world_geom.metadata['uuid']] = world_geom.metadata['name']
-    scene.metadata['name_to_uuid'] = {}
-    scene.metadata['name_to_uuid'][world_geom.metadata['name']] = world_geom.metadata['uuid']
 
     # シーンのメタデータに保存
     scene.metadata['custom_hierarchy'] = custom_hierarchy
@@ -74,16 +72,17 @@ def add_mesh(
     # metadata
     mesh.metadata['name'] = name
 
-    # UUIDを付与してシーンに追加
-    mesh_uuid = str(uuid.uuid4())
-    mesh.metadata['uuid'] = mesh_uuid
+    # UUIDを付与してmeshに追加
+    if 'uuid' not in mesh.metadata:
+        mesh_uuid = str(uuid.uuid4())
+        mesh.metadata['uuid'] = mesh_uuid
+    mesh_uuid = mesh.metadata['uuid']
+
+    # シーンにmeshを追加
     scene.add_geometry(mesh, node_name=name)
     if 'uuid_to_name' not in scene.metadata:
         scene.metadata['uuid_to_name'] = {}
-    if 'name_to_uuid' not in scene.metadata:
-        scene.metadata['name_to_uuid'] = {}
     scene.metadata['uuid_to_name'][mesh_uuid] = name
-    scene.metadata['name_to_uuid'][name] = mesh_uuid
 
     # 変換行列を準備
     # TODO: 引数にする
@@ -105,142 +104,110 @@ def add_mesh(
     return scene
 
 
-def add_mesh_triangle(
-        scene,
+def create_mesh_triangle(
         name,
         vertices,
         faces,
         uvs,
-        texture_path,
-        position=None,
-        parent_node=None):
+        texture_path=None,
+        material=None):
     """
-    三角形のメッシュをシーンに追加する
+    三角形のメッシュを作成する
 
     Args:
-        scene (trimesh.Scene): メッシュを追加するシーン
         name (str): メッシュの名前
         vertices (np.array): 頂点配列
         faces (np.array): 面配列
         uvs (np.array): UV座標配列
         texture_path (str): テクスチャ画像のパス
-        position (list, optional): [x, y, z]の位置。Noneの場合は[0, 0, 0]
-        parent_node (str, optional): 親ノードの名前。Noneの場合は'world'
+        material (Trimesh.Material): マテリアル
 
     Returns:
-        trimesh.Scene: 更新されたシーン
+        trimesh.Trimesh: 作成したメッシュ
     """
-    # ビットマップをテクスチャ用に読み込む
-    texture_img = Image.open(texture_path)
-
-    # TODO: 検査
-    # 頂点座標を設定
-    # 面を設定（三角形1つ）
-    # UV座標を設定
-
-    # trimeshでメッシュを生成
-    visual = trimesh.visual.TextureVisuals(uv=uvs, image=texture_img)
-    triangle_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
-    triangle_mesh.metadata['name'] = name
-
-    return add_mesh(scene, name, triangle_mesh, position, parent_node)
-
-
-def add_mesh_triangle_no_image(
-        scene,
-        name,
-        vertices,
-        faces,
-        material,
-        position=None,
-        parent_node=None):
-    """
-    テクスチャなしの三角形のメッシュをシーンに追加する
-
-    Args:
-        scene (trimesh.Scene): メッシュを追加するシーン
-        name (str): メッシュの名前
-        vertices (np.array): 頂点配列
-        faces (np.array): 面配列
-        material (trimesh.visual.material.Material): 使用するマテリアル
-        position (list, optional): [x, y, z]の位置。Noneの場合は[0, 0, 0]
-        parent_node (str, optional): 親ノードの名前。Noneの場合は'world'
-
-    Returns:
-        trimesh.Scene: 更新されたシーン
-    """
-    # デフォルト値の設定
-    if position is None:
-        position = [0, 0, 0]
-
-    if parent_node is None:
-        parent_node = 'world'
-
-    # PBRMaterialを使用する場合
-    if isinstance(material, trimesh.visual.material.PBRMaterial):
-        # face_colorsを設定（material.baseColorFactorを使用）
-        color = material.baseColorFactor[:3]  # RGB部分だけ取得
-        face_colors = np.array([color for _ in range(len(faces))], dtype=np.float32)
-
-        # メッシュを生成してマテリアルを設定
-        triangle_mesh = trimesh.Trimesh(
-            vertices=vertices,
-            faces=faces,
-            face_colors=face_colors,
-            process=False
-        )
-        triangle_mesh.visual.material = material
-
-    # SimpleMaterialを使用する場合
-    elif isinstance(material, trimesh.visual.material.SimpleMaterial):
-        # face_colorsを設定（material.diffuseを使用）
-        color = material.diffuse
-        face_colors = np.array([color for _ in range(len(faces))], dtype=np.float32)
-
-        # メッシュを生成してマテリアルを設定
-        triangle_mesh = trimesh.Trimesh(
-            vertices=vertices,
-            faces=faces,
-            face_colors=face_colors,
-            process=False
-        )
-        triangle_mesh.visual.material = material
-
-    # その他のマテリアルタイプ
+    if texture_path is not None:
+        # ビットマップをテクスチャ用に読み込む
+        texture_img = Image.open(texture_path)
+        # textureをもつメッシュを生成
+        visual = trimesh.visual.TextureVisuals(uv=uvs, image=texture_img)
+        mesh = trimesh.Trimesh(vertices=vertices, faces=faces, visual=visual, process=False)
     else:
-        # デフォルトの色（灰色）
-        face_colors = np.array([[0.5, 0.5, 0.5] for _ in range(len(faces))], dtype=np.float32)
-        triangle_mesh = trimesh.Trimesh(
-            vertices=vertices,
-            faces=faces,
-            face_colors=face_colors,
-            process=False
-        )
-        triangle_mesh.visual.material = material
+        if material is None:
+            # TODO: デフォルトマテリアルを作成する
+            pass
 
-    # TODO: PBR Materialのテクスチャ設定が出来るようにする
-    # 例:
-    #   material = trimesh.visual.material.PBRMaterial(
-    #       name="material_with_texture",
-    #       # 基本的なPBRマテリアル属性
-    #       metallicFactor=0.5,
-    #       roughnessFactor=0.3,
-    #       baseColorFactor=[1.0, 1.0, 1.0, 1.0],
-    #       emissiveFactor=[0.0, 0.0, 0.0],
-    #       normalScale=1.0,
-    #       occlusionStrength=1.0,
-    # テクスチャマップの設定
-    #       baseColorTexture=trimesh.visual.texture.Texture(
-    #           image=texture_image,
-    #           name="basecolor_texture"
-    #       ),
-    # 他のテクスチャマップも必要に応じて設定
-    #       metallicRoughnessTexture=trimesh.visual.texture.Texture(...),
-    #       normalTexture=trimesh.visual.texture.Texture(...),
-    #       occlusionTexture=trimesh.visual.texture.Texture(...),
-    #       emissiveTexture=trimesh.visual.texture.Texture(...)
 
-    return add_mesh(scene, name, triangle_mesh, position, parent_node)
+        # TODO: PBR Materialのテクスチャ設定が出来るようにする
+        # 例:
+        #   material = trimesh.visual.material.PBRMaterial(
+        #       name="material_with_texture",
+        #       # 基本的なPBRマテリアル属性
+        #       metallicFactor=0.5,
+        #       roughnessFactor=0.3,
+        #       baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+        #       emissiveFactor=[0.0, 0.0, 0.0],
+        #       normalScale=1.0,
+        #       occlusionStrength=1.0,
+        # テクスチャマップの設定
+        #       baseColorTexture=trimesh.visual.texture.Texture(
+        #           image=texture_image,
+        #           name="basecolor_texture"
+        #       ),
+        # 他のテクスチャマップも必要に応じて設定
+        #       metallicRoughnessTexture=trimesh.visual.texture.Texture(...),
+        #       normalTexture=trimesh.visual.texture.Texture(...),
+        #       occlusionTexture=trimesh.visual.texture.Texture(...),
+        #       emissiveTexture=trimesh.visual.texture.Texture(...)
+
+
+        # PBRMaterialを使用する場合
+        if isinstance(material, trimesh.visual.material.PBRMaterial):
+            # face_colorsを設定（material.baseColorFactorを使用）
+            color = material.baseColorFactor[:3]  # RGB部分だけ取得
+            face_colors = np.array([color for _ in range(len(faces))], dtype=np.float32)
+
+            # メッシュを生成してマテリアルを設定
+            mesh = trimesh.Trimesh(
+                vertices=vertices,
+                faces=faces,
+                face_colors=face_colors,
+                process=False
+            )
+            mesh.visual.material = material
+
+        # SimpleMaterialを使用する場合
+        elif isinstance(material, trimesh.visual.material.SimpleMaterial):
+            # face_colorsを設定（material.diffuseを使用）
+            color = material.diffuse
+            face_colors = np.array([color for _ in range(len(faces))], dtype=np.float32)
+
+            # メッシュを生成してマテリアルを設定
+            mesh = trimesh.Trimesh(
+                vertices=vertices,
+                faces=faces,
+                face_colors=face_colors,
+                process=False
+            )
+            mesh.visual.material = material
+
+        # その他のマテリアルタイプ
+        else:
+            # デフォルトの色（灰色）
+            face_colors = np.array([[0.5, 0.5, 0.5] for _ in range(len(faces))], dtype=np.float32)
+            mesh = trimesh.Trimesh(
+                vertices=vertices,
+                faces=faces,
+                face_colors=face_colors,
+                process=False
+            )
+            mesh.visual.material = material
+
+    # metadata を作成
+    mesh.metadata['name'] = name
+    mesh_uuid = str(uuid.uuid4())
+    mesh.metadata['uuid'] = mesh_uuid
+
+    return mesh
 
 
 def example_scene():
@@ -254,8 +221,7 @@ def example_scene():
     scene = empty_scene()
 
     # triangle1を追加（親はworld）
-    scene = add_mesh_triangle(
-        scene=scene,
+    triangle1 = create_mesh_triangle(
         name='triangle1',
         # trimesh は +Y up
         vertices = np.array([
@@ -276,13 +242,11 @@ def example_scene():
             [1, 1],  # 頂点2のUV: 右上
         ], dtype=np.float32),
         texture_path='./static/TestColorGrid.png',
-        position=[0, 0, 0],
-        parent_node='world'
     )
+    add_mesh(scene, 'triangle1', triangle1, position=[0, 0, 0], parent_node='world')
 
     # triangle2を追加（親はtriangle1）
-    scene = add_mesh_triangle(
-        scene=scene,
+    triangle2 = create_mesh_triangle(
         name='triangle2',
         vertices = np.array([
             [0, 0, 0],  # 頂点0
@@ -301,9 +265,8 @@ def example_scene():
             [1, 1],  # 頂点2のUV: 右上
         ], dtype=np.float32),
         texture_path='./static/TestPicture.png',
-        position=[1.0, 1.0, 0.0],
-        parent_node='triangle1'
     )
+    add_mesh(scene, 'triangle2', triangle2, position=[1.0, 1.0, 1.0], parent_node='triangle1')
 
     # triangle3を追加（PBRMaterialを使用、親はtriangle1）
     pbr_material = trimesh.visual.material.PBRMaterial(
@@ -313,8 +276,7 @@ def example_scene():
         roughnessFactor=0.2
     )
 
-    scene = add_mesh_triangle_no_image(
-        scene=scene,
+    triangle3 = create_mesh_triangle(
         name='triangle3',
         vertices = np.array([
             [0, 0, 0],  # 頂点0
@@ -326,10 +288,15 @@ def example_scene():
             [0, 2, 1],
             [1, 2, 3],
         ]),
+        uvs = np.array([
+            [0, 0],  # 頂点0のUV: 左下
+            [0, 1],  # 頂点1のUV: 左上
+            [1, 0],  # 頂点2のUV: 右下
+            [1, 1],  # 頂点2のUV: 右上
+        ], dtype=np.float32),
         material=pbr_material,
-        position=[-1.0, 0.0, 0.0],
-        parent_node='triangle1'
     )
+    add_mesh(scene, 'triangle3', triangle3, position=[-1.0, 0.0, 0.0], parent_node='triangle1')
 
     # triangle4を追加（SimpleMaterialを使用、親はtriangle1）
     simple_material = trimesh.visual.material.SimpleMaterial(
@@ -339,8 +306,7 @@ def example_scene():
         glossiness=100.0
     )
 
-    scene = add_mesh_triangle_no_image(
-        scene=scene,
+    triangle4 = create_mesh_triangle(
         name='triangle4',
         vertices = np.array([
             [0, 0, 0],  # 頂点0
@@ -352,10 +318,15 @@ def example_scene():
             [0, 2, 1],
             [1, 2, 3],
         ]),
+        uvs = np.array([
+            [0, 0],  # 頂点0のUV: 左下
+            [0, 1],  # 頂点1のUV: 左上
+            [1, 0],  # 頂点2のUV: 右下
+            [1, 1],  # 頂点2のUV: 右上
+        ], dtype=np.float32),
         material=simple_material,
-        position=[0.0, -1.0, 0.0],
-        parent_node='triangle1'
     )
+    add_mesh(scene, 'triangle4', triangle4, position=[0.0, -1.0, 0.0], parent_node='triangle1')
 
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
     custom_transforms = scene.metadata.get('custom_transforms', {})
