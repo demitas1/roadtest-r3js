@@ -59,23 +59,14 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
 
     # シーンからメッシュ情報を取得
-    meshes = {}
-    mesh_names = []  # メッシュ名のリストを保持する配列
-    texture_images = {}  # メッシュ名をキーとした画像データを保持する辞書
-    # TODO: PBRマテリアルに対応
-
-    # 構造ノード（メッシュがないノード）のセット
-    structure_nodes = set()
-
-    # TODO: 現在のコードは名前の衝突を考慮していない
-    # TODO: 名前からオブジェクトを引くのではなく、uuidを使用してマップを作る
+    meshes = {}  # 有効な頂点リストを持つメッシュの辞書 (uuid -> Trimesh)
+    texture_images = {}  # node uuid をキーとした画像データを保持する辞書
+    structure_nodes = {}  # 構造ノード（メッシュがないノード）の辞書
 
     for geom_key, geom in scene.geometry.items():
         if geom is None:
-            # ジオメトリを持たないオブジェクトは構造ノードとして扱う
-            print(f"Info: Node '{geom_key}' has no corresponding geometry, treating as structure node")
-            # TODO: 現在のコードは名前の衝突を考慮していない
-            structure_nodes.add(geom_key)
+            # 通常のtrimeshシーンでNoneとなることはないはず
+            print(f"Info: Node '{geom_key}' has no geometry. skip this.")
             continue
 
         # ジオメトリ名はtrimeshによって変更される可能性があるので
@@ -100,12 +91,14 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             if len(vertices) == 0 or len(faces) == 0:
                 if debug:
                     print(f"Info: Node '{node_name}' has no geometry, treating as structure node")
-                structure_nodes.add(node_name)
+                structure_nodes[geom_uuid] = {
+                    'node_name': node_name,
+                    'vertices': None,
+                    'faces': None,
+                    'uvs': None,
+                    'geometry': geom,
+                }
                 continue
-
-            # メッシュ名を追加
-            # TODO: 現在のコードは名前の衝突を考慮していない
-            mesh_names.append(node_name)
 
             # UV座標の取得
             if hasattr(geom.visual, 'uv') and geom.visual.uv is not None:
@@ -118,21 +111,20 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             # TODO: PBR Material への対応
             if hasattr(geom.visual, 'material') and hasattr(geom.visual.material, 'image'):
                 image = geom.visual.material.image
-                texture_images[node_name] = image
+                texture_images[geom_uuid] = image
             elif hasattr(geom.visual, 'material') and hasattr(geom.visual.material, 'texture'):
                 # textureプロパティからイメージを取得
                 texture = geom.visual.material.texture
                 if hasattr(texture, 'image'):
-                    texture_images[node_name] = texture.image
+                    texture_images[geom_uuid] = texture.image
 
-            # TODO: 現在のコードは名前の衝突を考慮していない
-            meshes[node_name] = {
-                'uuid': geom_uuid,
+            # 有効な頂点を持つメッシュとして追加
+            meshes[geom_uuid] = {
                 'node_name': node_name,
                 'vertices': vertices,
                 'faces': faces,
                 'uvs': uvs,
-                'mesh_obj': geom,
+                'geometry': geom,
             }
         elif isinstance(geom, trimesh.PointCloud):
             # PointCloudオブジェクトの処理
@@ -141,7 +133,13 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
             # GLTFでは点群を扱うことができないため、小さなマーカーなどに変換する必要がある
             # ここでは省略して構造ノードとして扱う
-            structure_nodes.add(node_name)
+            structure_nodes[geom_uuid] = {
+                'node_name': node_name,
+                'vertices': None,
+                'faces': None,
+                'uvs': None,
+                'geometry': geom,
+            }
         elif isinstance(geom, trimesh.Path):
             # Pathオブジェクトの処理
             if debug:
@@ -149,24 +147,38 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
             # GLTFでは線を扱うことができないため、必要に応じて変換する必要がある
             # ここでは省略して構造ノードとして扱う
-            structure_nodes.add(node_name)
+            structure_nodes[geom_uuid] = {
+                'node_name': node_name,
+                'vertices': None,
+                'faces': None,
+                'uvs': None,
+                'geometry': geom,
+            }
         else:
             # その他のジオメトリタイプ
             if debug:
                 print(f"Info: Node '{node_name}' has unsupported geometry type: {type(geom)}, treating as structure node")
-            structure_nodes.add(node_name)
+            structure_nodes[geom_uuid] = {
+                'node_name': node_name,
+                'vertices': None,
+                'faces': None,
+                'uvs': None,
+                'geometry': geom,
+            }
 
     if debug:
         print("\nStructure nodes (non-mesh):")
-        for node in structure_nodes:
-            print(f"- {node}")
+        for geom_uuid, structure_node in structure_nodes.items():
+            node_name = structure_node['node_name']
+            print(f"- {geom_uuid}: {node_name}")
 
         print("\nMesh nodes:")
-        for node in mesh_names:
-            print(f"- {node}")
+        for geom_uuid, mesh_info in meshes.items():
+            node_name = mesh_info['node_name']
+            print(f"- {geom_uuid}: {node_name}")
 
     # メッシュノードが存在するか確認
-    if not mesh_names:
+    if len(meshes) == 0:
         if debug:
             print("No valid meshes found in the scene. Creating a nodes-only GLTF file.")
 
@@ -189,13 +201,14 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         }
 
         # ノード情報を追加
-        nodes_dict = {}  # ノード名とインデックスのマッピング
+        nodes_dict = {}  # ノードuuid -> インデックスのマッピング
         node_index = 0
 
-        for node_name in structure_nodes:
+        for geom_uuid, geom in structure_nodes.items():
             # カスタム変換行列を取得
-            if node_name in custom_transforms:
-                transform = custom_transforms[node_name]
+            node_name = geom['node_name']
+            if geom_uuid in custom_transforms:
+                transform = custom_transforms[geom_uuid]
             else:
                 transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
 
@@ -215,7 +228,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             }
 
             gltf_json["nodes"].append(node_info)
-            nodes_dict[node_name] = node_index
+            nodes_dict[geom_uuid] = node_index
             node_index += 1
 
         # 親子関係を設定
@@ -228,9 +241,9 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             node_name = node.metadata.get('name', None)
             parent_name = parent.metadata.get('name', None)
 
-            if parent_name is not None and parent_name in nodes_dict and node_name in nodes_dict:
-                parent_index = nodes_dict[parent_name]
-                child_index = nodes_dict[node_name]
+            if parent_uuid in nodes_dict and node_uuid in nodes_dict:
+                parent_index = nodes_dict[parent_uuid]
+                child_index = nodes_dict[node_uuid]
 
                 # 親ノードの子リストを更新
                 if "children" not in gltf_json["nodes"][parent_index]:
@@ -244,13 +257,14 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
         # ルートノードをシーンに追加
         root_nodes = []
-        for node_name in structure_nodes:
-            if node_name in custom_hierarchy and custom_hierarchy[node_name] is None:
-                if node_name in nodes_dict:
-                    root_node_index = nodes_dict[node_name]
+        for node_uuid, node_info in structure_nodes.items():
+            node_name = node_info['node_name']
+            if node_uuid in custom_hierarchy and custom_hierarchy[node_uuid] is None:
+                if node_uuid in nodes_dict:
+                    root_node_index = nodes_dict[node_uuid]
                     root_nodes.append(root_node_index)
                     if debug:
-                        print(f"Added root node: '{node_name}' (index {root_node_index})")
+                        print(f"Added root node: '{node_uuid}:{node_name}' (index {root_node_index})")
 
         # ルートノードがない場合、最初のノードをルートとして使用
         if not root_nodes and len(gltf_json["nodes"]) > 0:
@@ -261,7 +275,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         # ルートノードをシーンに設定
         gltf_json["scenes"][0]["nodes"] = root_nodes
 
-        # ノード階層を出力（デバッグ用）
+        # GLTFノード階層を出力（デバッグ用）
         if debug:
             print("\nGLTF Node Hierarchy:")
             for i, node in enumerate(gltf_json["nodes"]):
@@ -291,13 +305,14 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     # 以降はバイナリバッファがある場合の処理
 
     # テクスチャが存在しないメッシュ用のダミーテクスチャ作成
-    for node_name in mesh_names:
-        if node_name not in texture_images:
+    for node_uuid, node_info in meshes.items():
+        node_name = node_info['node_name']
+        if node_uuid not in texture_images:
             # ダミーテクスチャを作成して保存
             if debug:
-                print(f"Info: Creating dummy texture for mesh '{node_name}'")
+                print(f"Info: Creating dummy texture for mesh '{node_uuid}:{node_name}'")
             dummy_texture = Image.new('RGB', (2, 2), color='white')
-            texture_images[node_name] = dummy_texture
+            texture_images[node_uuid] = dummy_texture
 
     # バッファの準備
     vertex_data = {}
@@ -306,81 +321,80 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     image_data = {}
 
     # 各メッシュのバイナリデータを準備
-    for mesh_name in mesh_names:
+    for mesh_uuid, mesh_info in meshes.items():
+        mesh_name = mesh_info['node_name']
         # 頂点データ
-        vertex_data[mesh_name] = bytearray()
-        for vertex in meshes[mesh_name]['vertices']:
-            vertex_data[mesh_name].extend(struct.pack('fff', *vertex))
+        vertex_data[mesh_uuid] = bytearray()
+        for vertex in meshes[mesh_uuid]['vertices']:
+            vertex_data[mesh_uuid].extend(struct.pack('fff', *vertex))
 
         # インデックスデータ
-        index_data[mesh_name] = bytearray()
-        for face in meshes[mesh_name]['faces']:
+        index_data[mesh_uuid] = bytearray()
+        for face in meshes[mesh_uuid]['faces']:
             for idx in face:
-                index_data[mesh_name].extend(struct.pack('H', idx))
+                index_data[mesh_uuid].extend(struct.pack('H', idx))
 
         # UVデータ
-        uv_data[mesh_name] = bytearray()
-        for uv in meshes[mesh_name]['uvs']:
+        uv_data[mesh_uuid] = bytearray()
+        for uv in meshes[mesh_uuid]['uvs']:
             # UV座標のY成分（V成分）を反転
             # trimesh内部ではPIL.Imageを参照しているのでテクスチャの+Vが逆
             flipped_uv = [uv[0], 1.0 - uv[1]]
-            uv_data[mesh_name].extend(struct.pack('ff', *flipped_uv))
+            uv_data[mesh_uuid].extend(struct.pack('ff', *flipped_uv))
 
         # 画像データ
-        if mesh_name in texture_images and texture_images[mesh_name] is not None:
+        if mesh_uuid in texture_images and texture_images[mesh_uuid] is not None:
             image_buffer = io.BytesIO()
-            texture_images[mesh_name].save(image_buffer, format="PNG")
-            image_data[mesh_name] = image_buffer.getvalue()
+            texture_images[mesh_uuid].save(image_buffer, format="PNG")
+            image_data[mesh_uuid] = image_buffer.getvalue()
         else:
             # ダミーテクスチャデータ (白い2x2ピクセル)
             dummy_buffer = io.BytesIO()
             dummy_texture = Image.new('RGB', (2, 2), color='white')
             dummy_texture.save(dummy_buffer, format="PNG")
-            image_data[mesh_name] = dummy_buffer.getvalue()
+            image_data[mesh_uuid] = dummy_buffer.getvalue()
 
     # バッファ全体を構築
     buffer_data = bytearray()
-
-    # オフセット情報を保持する辞書
-    offsets = {}
-
-    # 現在のオフセット位置
-    current_offset = 0
+    offsets = {}  # オフセット情報を保持する辞書
+    current_offset = 0  # 現在のオフセット位置
 
     # 各メッシュのデータを順番にバッファに追加
-    for mesh_name in mesh_names:
+    for mesh_uuid, mesh_info in meshes.items():
+        mesh_name = mesh_info['node_name']
         # 頂点データ
-        offsets[f'{mesh_name}_vertex'] = {
+        offsets[f'{mesh_uuid}_vertex'] = {
             'offset': current_offset,
-            'length': len(vertex_data[mesh_name])
+            'length': len(vertex_data[mesh_uuid])
         }
-        buffer_data.extend(vertex_data[mesh_name])
-        current_offset += len(vertex_data[mesh_name])
+        buffer_data.extend(vertex_data[mesh_uuid])
+        current_offset += len(vertex_data[mesh_uuid])
 
         # インデックスデータ
-        offsets[f'{mesh_name}_index'] = {
+        offsets[f'{mesh_uuid}_index'] = {
             'offset': current_offset,
-            'length': len(index_data[mesh_name])
+            'length': len(index_data[mesh_uuid])
         }
-        buffer_data.extend(index_data[mesh_name])
-        current_offset += len(index_data[mesh_name])
+        buffer_data.extend(index_data[mesh_uuid])
+        current_offset += len(index_data[mesh_uuid])
 
         # UVデータ
-        offsets[f'{mesh_name}_uv'] = {
+        offsets[f'{mesh_uuid}_uv'] = {
             'offset': current_offset,
-            'length': len(uv_data[mesh_name])
+            'length': len(uv_data[mesh_uuid])
         }
-        buffer_data.extend(uv_data[mesh_name])
-        current_offset += len(uv_data[mesh_name])
+        buffer_data.extend(uv_data[mesh_uuid])
+        current_offset += len(uv_data[mesh_uuid])
 
     # 画像データを最後にまとめて追加
-    for mesh_name in mesh_names:
-        offsets[f'{mesh_name}_image'] = {
+    for mesh_uuid, mesh_info in meshes.items():
+        mesh_name = mesh_info['node_name']
+        offsets[f'{mesh_uuid}_image'] = {
             'offset': current_offset,
-            'length': len(image_data[mesh_name])
+            'length': len(image_data[mesh_uuid])
         }
-        buffer_data.extend(image_data[mesh_name])
-        current_offset += len(image_data[mesh_name])
+        buffer_data.extend(image_data[mesh_uuid])
+        current_offset += len(image_data[mesh_uuid])
 
     # pygltflib構造の作成
     gltf = GLTF2()
@@ -390,104 +404,6 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     gltf.scenes.append(Scene(name="Scene"))
     gltf.scene = 0
 
-    # シーングラフからノード階層を作成
-    nodes_dict = {}  # ノード名とインデックスのマッピング
-    node_index = 0
-
-    # 有効なノード名のセットを作成 (メッシュノードとその親ノード、および構造ノード)
-    print(f'mesh_names: {mesh_names}')
-    print(f'structure_nodes: {structure_nodes}')
-    valid_nodes = set(mesh_names) | structure_nodes
-
-    # シーングラフを走査してノード構造を作成
-    # 最初にすべての有効なノードを作成
-    for node_name in valid_nodes:
-        # メッシュノードかどうかを確認
-        is_mesh_node = node_name in mesh_names
-        mesh_index = mesh_names.index(node_name) if is_mesh_node else None
-
-        # カスタム変換行列を取得
-        if node_name in custom_transforms:
-            transform = custom_transforms[node_name]
-        else:
-            transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
-
-        # 変換を分解: 平行移動、回転、スケールに
-        translation = transform[:3, 3].tolist()
-
-        # 回転は四元数に変換する必要がある
-        # この例では簡略化して単位四元数を使用
-        rotation = [0.0, 0.0, 0.0, 1.0]  # デフォルトの回転なし(x, y, z, w)
-
-        # スケールは行列から抽出（簡易化）
-        scale = [1.0, 1.0, 1.0]  # デフォルトのスケール
-
-        # ノードを作成
-        node = Node(
-            name=node_name,
-            mesh=mesh_index,
-            translation=translation,
-            rotation=rotation,
-            scale=scale
-        )
-
-        gltf.nodes.append(node)
-        nodes_dict[node_name] = node_index
-        node_index += 1
-
-    # 親子関係を設定
-    for node_uuid, parent_uuid in custom_hierarchy.items():
-        node = dict_uuid_to_node[node_uuid]
-        if parent_uuid is None:
-            continue  # 親なし (worldノード)
-        parent = dict_uuid_to_node[parent_uuid]
-
-        node_name = node.metadata.get('name', None)
-        parent_name = parent.metadata.get('name', None)
-
-        if parent_name is not None and parent_name in nodes_dict and node_name in nodes_dict:
-            parent_index = nodes_dict[parent_name]
-            child_index = nodes_dict[node_name]
-
-            # 親ノードの子リストを更新
-            if not hasattr(gltf.nodes[parent_index], 'children') or gltf.nodes[parent_index].children is None:
-                gltf.nodes[parent_index].children = []
-
-            # 既に子リストに追加されていない場合のみ追加
-            if child_index not in gltf.nodes[parent_index].children:
-                gltf.nodes[parent_index].children.append(child_index)
-                if debug:
-                    print(f"Added node '{node_name}' (index {child_index}) as child of '{parent_name}' (index {parent_index})")
-
-    # ルートノードをシーンに追加
-    # カスタム階層から親がないノードを特定
-    root_nodes = []
-    for node_name in valid_nodes:
-        if node_name in custom_hierarchy and custom_hierarchy[node_name] is None:
-            if node_name in nodes_dict:
-                root_node_index = nodes_dict[node_name]
-                root_nodes.append(root_node_index)
-                if debug:
-                    print(f"Added root node: '{node_name}' (index {root_node_index})")
-
-    # ルートノードがない場合、最初のノードをルートとして使用
-    if not root_nodes and len(gltf.nodes) > 0:
-        if debug:
-            print("Warning: No root nodes found. Using the first node as root.")
-        root_nodes = [0]
-
-    if debug:
-        # デバッグ: ノード階層を出力
-        print("\nGLTF Node Hierarchy:")
-        for i, node in enumerate(gltf.nodes):
-            children = getattr(node, 'children', [])
-            children_str = ', '.join([f"{c} ({gltf.nodes[c].name})" for c in children]) if children else "none"
-            print(f"Node {i} ({node.name}): children = [{children_str}]")
-
-        print(f"\nRoot nodes: {root_nodes}")
-
-    gltf.scenes[0].nodes = root_nodes
-
     # バッファ、バッファビュー、アクセサの設定
     gltf.buffers.append(Buffer(byteLength=len(buffer_data)))
 
@@ -496,50 +412,52 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     accessors = {}
     textures = {}
     materials = {}
+    mesh_indices = {}  # uuid -> mesh index の辞書
 
     # 各メッシュのバッファビューとアクセサを作成
-    for i, mesh_name in enumerate(mesh_names):
+    for mesh_uuid, mesh_info in meshes.items():
+        mesh_name = mesh_info['node_name']
         # 頂点データのバッファビュー
         vertex_buffer_view = BufferView(
             buffer=0,
-            byteOffset=offsets[f'{mesh_name}_vertex']['offset'],
-            byteLength=offsets[f'{mesh_name}_vertex']['length'],
+            byteOffset=offsets[f'{mesh_uuid}_vertex']['offset'],
+            byteLength=offsets[f'{mesh_uuid}_vertex']['length'],
             target=ARRAY_BUFFER
         )
         gltf.bufferViews.append(vertex_buffer_view)
-        buffer_views[f'{mesh_name}_vertex'] = len(gltf.bufferViews) - 1
+        buffer_views[f'{mesh_uuid}_vertex'] = len(gltf.bufferViews) - 1
 
         # インデックスデータのバッファビュー
         index_buffer_view = BufferView(
             buffer=0,
-            byteOffset=offsets[f'{mesh_name}_index']['offset'],
-            byteLength=offsets[f'{mesh_name}_index']['length'],
+            byteOffset=offsets[f'{mesh_uuid}_index']['offset'],
+            byteLength=offsets[f'{mesh_uuid}_index']['length'],
             target=ELEMENT_ARRAY_BUFFER
         )
         gltf.bufferViews.append(index_buffer_view)
-        buffer_views[f'{mesh_name}_index'] = len(gltf.bufferViews) - 1
+        buffer_views[f'{mesh_uuid}_index'] = len(gltf.bufferViews) - 1
 
         # UVデータのバッファビュー
         uv_buffer_view = BufferView(
             buffer=0,
-            byteOffset=offsets[f'{mesh_name}_uv']['offset'],
-            byteLength=offsets[f'{mesh_name}_uv']['length'],
+            byteOffset=offsets[f'{mesh_uuid}_uv']['offset'],
+            byteLength=offsets[f'{mesh_uuid}_uv']['length'],
             target=ARRAY_BUFFER
         )
         gltf.bufferViews.append(uv_buffer_view)
-        buffer_views[f'{mesh_name}_uv'] = len(gltf.bufferViews) - 1
+        buffer_views[f'{mesh_uuid}_uv'] = len(gltf.bufferViews) - 1
 
         # イメージデータのバッファビュー
         image_buffer_view = BufferView(
             buffer=0,
-            byteOffset=offsets[f'{mesh_name}_image']['offset'],
-            byteLength=offsets[f'{mesh_name}_image']['length']
+            byteOffset=offsets[f'{mesh_uuid}_image']['offset'],
+            byteLength=offsets[f'{mesh_uuid}_image']['length']
         )
         gltf.bufferViews.append(image_buffer_view)
-        buffer_views[f'{mesh_name}_image'] = len(gltf.bufferViews) - 1
+        buffer_views[f'{mesh_uuid}_image'] = len(gltf.bufferViews) - 1
 
         # 頂点データのアクセサ
-        vertices_np = meshes[mesh_name]['vertices']
+        vertices_np = meshes[mesh_uuid]['vertices']
         # 空の配列でのmin/maxエラーを防ぐためのチェック
         if len(vertices_np) > 0:
             min_values = vertices_np.min(axis=0).tolist()
@@ -550,7 +468,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             max_values = [0, 0, 0]
 
         position_accessor = Accessor(
-            bufferView=buffer_views[f'{mesh_name}_vertex'],
+            bufferView=buffer_views[f'{mesh_uuid}_vertex'],
             componentType=FLOAT,
             count=len(vertices_np),
             type=VEC3,
@@ -558,33 +476,33 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             max=max_values
         )
         gltf.accessors.append(position_accessor)
-        accessors[f'{mesh_name}_position'] = len(gltf.accessors) - 1
+        accessors[f'{mesh_uuid}_position'] = len(gltf.accessors) - 1
 
         # インデックスデータのアクセサ
         index_accessor = Accessor(
-            bufferView=buffer_views[f'{mesh_name}_index'],
+            bufferView=buffer_views[f'{mesh_uuid}_index'],
             componentType=UNSIGNED_SHORT,
-            count=len(meshes[mesh_name]['faces']) * 3,
+            count=len(meshes[mesh_uuid]['faces']) * 3,
             type=SCALAR
         )
         gltf.accessors.append(index_accessor)
-        accessors[f'{mesh_name}_indices'] = len(gltf.accessors) - 1
+        accessors[f'{mesh_uuid}_indices'] = len(gltf.accessors) - 1
 
         # UVデータのアクセサ
         uv_accessor = Accessor(
-            bufferView=buffer_views[f'{mesh_name}_uv'],
+            bufferView=buffer_views[f'{mesh_uuid}_uv'],
             componentType=FLOAT,
-            count=len(meshes[mesh_name]['uvs']),
+            count=len(meshes[mesh_uuid]['uvs']),
             type=VEC2
         )
         gltf.accessors.append(uv_accessor)
-        accessors[f'{mesh_name}_texcoord'] = len(gltf.accessors) - 1
+        accessors[f'{mesh_uuid}_texcoord'] = len(gltf.accessors) - 1
 
         # イメージ
         image = GLTFImage(
-            name=f"{mesh_name}_texture",
+            name=f"{mesh_uuid}_texture",
             mimeType="image/png",
-            bufferView=buffer_views[f'{mesh_name}_image']
+            bufferView=buffer_views[f'{mesh_uuid}_image']
         )
         gltf.images.append(image)
 
@@ -604,13 +522,13 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             source=len(gltf.images) - 1
         )
         gltf.textures.append(texture)
-        textures[mesh_name] = len(gltf.textures) - 1
+        textures[mesh_uuid] = len(gltf.textures) - 1
 
         # マテリアル
         material = Material(
-            name=f"{mesh_name}_material",
+            name=f"{mesh_uuid}_material",
             pbrMetallicRoughness=PbrMetallicRoughness(
-                baseColorTexture=TextureInfo(index=textures[mesh_name]),
+                baseColorTexture=TextureInfo(index=textures[mesh_uuid]),
                 metallicFactor=0.0,
                 roughnessFactor=1.0
             ),
@@ -618,24 +536,138 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         )
         material.alphaCutoff = None  # alphaCutoffを明示的に削除
         gltf.materials.append(material)
-        materials[mesh_name] = len(gltf.materials) - 1
+        materials[mesh_uuid] = len(gltf.materials) - 1
 
         # プリミティブとメッシュ
         primitive = Primitive(
             attributes=Attributes(
-                POSITION=accessors[f'{mesh_name}_position'],
-                TEXCOORD_0=accessors[f'{mesh_name}_texcoord']
+                POSITION=accessors[f'{mesh_uuid}_position'],
+                TEXCOORD_0=accessors[f'{mesh_uuid}_texcoord']
             ),
-            indices=accessors[f'{mesh_name}_indices'],
-            material=materials[mesh_name]
+            indices=accessors[f'{mesh_uuid}_indices'],
+            material=materials[mesh_uuid]
         )
 
+        # メッシュをgltfに追加し、そのインデックスを記録
         mesh = Mesh(
             name=mesh_name,
             primitives=[primitive]
         )
-
+        mesh_index = len(gltf.meshes)
         gltf.meshes.append(mesh)
+        mesh_indices[mesh_uuid] = mesh_index
+
+    # シーングラフからノード階層を作成
+    nodes_dict = {}  # ノード名とインデックスのマッピング
+    node_index = 0
+
+    # メッシュと構造ノードの辞書を結合する
+    print(f'meshes: {meshes.keys()}')
+    print(f'structure_nodes: {structure_nodes.keys()}')
+    duplicate_keys = set(meshes.keys()) & set(structure_nodes.keys())
+    if duplicate_keys:
+        print(f"duplicate between mesh and structure node dict: {duplicate_keys}")
+    valid_nodes = {**meshes, **structure_nodes}
+
+    # シーングラフを走査してノード構造を作成
+    for node_uuid, node_info in valid_nodes.items():
+        node_name = node_info['node_name']
+        # メッシュノードかどうかを確認
+        is_mesh_node = node_uuid in meshes
+
+        # 事前に作成したmesh_indicesを使用してメッシュインデックスを設定
+        if is_mesh_node and node_uuid in mesh_indices:
+            node_mesh_index = mesh_indices[node_uuid]
+            if debug:
+                print(f"Node '{node_name}' using mesh at index {node_mesh_index}")
+        else:
+            node_mesh_index = None
+            if debug and is_mesh_node:
+                print(f"Warning: Node '{node_name}' has no corresponding mesh in mesh_indices")
+
+        # カスタム変換行列を取得
+        if node_uuid in custom_transforms:
+            transform = custom_transforms[node_uuid]
+        else:
+            transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
+
+        # 変換を分解: 平行移動、回転、スケールに
+        translation = transform[:3, 3].tolist()
+        print(f"{node_uuid}:{node_name}: translation={translation}")
+
+        # 回転は四元数に変換する必要がある
+        # この例では簡略化して単位四元数を使用
+        rotation = [0.0, 0.0, 0.0, 1.0]  # デフォルトの回転なし(x, y, z, w)
+
+        # スケールは行列から抽出（簡易化）
+        scale = [1.0, 1.0, 1.0]  # デフォルトのスケール
+
+        # ノードを作成
+        node = Node(
+            name=node_name,
+            mesh=node_mesh_index,
+            translation=translation,
+            rotation=rotation,
+            scale=scale
+        )
+
+        gltf.nodes.append(node)
+        nodes_dict[node_uuid] = node_index
+        node_index += 1
+
+    # 親子関係を設定
+    for node_uuid, parent_uuid in custom_hierarchy.items():
+        node = dict_uuid_to_node[node_uuid]
+        if parent_uuid is None:
+            continue  # 親なし (worldノード)
+        parent = dict_uuid_to_node[parent_uuid]
+
+        node_name = node.metadata.get('name', None)
+        parent_name = parent.metadata.get('name', None)
+
+        if parent_uuid in nodes_dict and node_uuid in nodes_dict:
+            parent_index = nodes_dict[parent_uuid]
+            child_index = nodes_dict[node_uuid]
+
+            # 親ノードの子リストを更新
+            if not hasattr(gltf.nodes[parent_index], 'children') or gltf.nodes[parent_index].children is None:
+                gltf.nodes[parent_index].children = []
+
+            # 既に子リストに追加されていない場合のみ追加
+            if child_index not in gltf.nodes[parent_index].children:
+                gltf.nodes[parent_index].children.append(child_index)
+                if debug:
+                    print(f"Added node '{node_name}' (index {child_index}) as child of '{parent_name}' (index {parent_index})")
+
+    # ルートノードをシーンに追加
+    # カスタム階層から親がないノードを特定
+    root_nodes = []
+    for node_uuid, node_info in valid_nodes.items():
+        node_name = node_info['node_name']
+        if node_uuid in custom_hierarchy and custom_hierarchy[node_uuid] is None:
+            if node_uuid in nodes_dict:
+                root_node_index = nodes_dict[node_uuid]
+                root_nodes.append(root_node_index)
+                if debug:
+                    print(f"Added root node: '{node_uuid}:{node_name}' (index {root_node_index})")
+
+    # ルートノードがない場合、最初のノードをルートとして使用
+    if not root_nodes and len(gltf.nodes) > 0:
+        if debug:
+            print("Warning: No root nodes found. Using the first node as root.")
+        root_nodes = [0]
+
+    if debug:
+        # デバッグ: ノード階層を出力
+        print("\nGLTF Node Hierarchy:")
+        for i, node in enumerate(gltf.nodes):
+            children = getattr(node, 'children', [])
+            children_str = ', '.join([f"{c} ({gltf.nodes[c].name})" for c in children]) if children else "none"
+            print(f"Node {i} ({node.name}): children = [{children_str}]")
+
+        print(f"\nRoot nodes: {root_nodes}")
+
+    gltf.scenes[0].nodes = root_nodes
 
     # バイナリデータを設定
     gltf.set_binary_blob(buffer_data)

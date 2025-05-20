@@ -111,7 +111,7 @@ def add_mesh(
 
     # 親子関係と変換を更新
     custom_hierarchy[mesh_uuid] = parent_node_uuid
-    custom_transforms[name] = transform
+    custom_transforms[mesh_uuid] = transform
 
     # シーンのメタデータに保存し直す
     scene.metadata['custom_hierarchy'] = custom_hierarchy
