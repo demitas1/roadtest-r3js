@@ -16,37 +16,49 @@ def empty_scene():
     # worldジオメトリをシーンに追加
     world_geom = trimesh.Trimesh(vertices=np.array([]), process=False)
     world_geom.metadata['name'] = 'world'
-    world_geom.metadata['uuid'] = str(uuid.uuid4())
+    world_uuid = str(uuid.uuid4())
+    world_geom.metadata['uuid'] = world_uuid
     scene.add_geometry(world_geom, node_name='world')
 
-    # 変換行列を準備
-    identity = np.eye(4)
-
-    # 親子関係と変換を初期化
+    # 親子関係 子uuid -> 親uuid
     custom_hierarchy = {
-        'world': None  # worldは親なし
+        world_uuid: None  # worldは親なし
     }
 
+    # uuid -> 変換行列
+    identity = np.eye(4)
     custom_transforms = {
-        'world': identity
+        world_uuid: identity
     }
 
-    # UUIDとノード名の双方向マッピング
+    # UUID->ノード名のマッピング
     # trimeshがgeometryにnodeとは異なる名称を付与する場合があるのでトラックする目的
     scene.metadata['uuid_to_name'] = {}
-    scene.metadata['uuid_to_name'][world_geom.metadata['uuid']] = world_geom.metadata['name']
+    scene.metadata['uuid_to_name'][world_uuid] = 'world'
+    # UUID->ノードのマッピング
+    scene.metadata['uuid_to_node'] = {}
+    scene.metadata['uuid_to_node'][world_uuid] = world_geom
 
     # シーンのメタデータに保存
+    scene.metadata['root_node'] = world_geom
     scene.metadata['custom_hierarchy'] = custom_hierarchy
     scene.metadata['custom_transforms'] = custom_transforms
 
     return scene
 
 
+def scene_root(scene):
+    """
+    シーンのルートノードを返す
+    通常は world
+    """
+    return scene.metadata.get('root_node', None)
+
+
 def add_mesh(
         scene,
-        name,
         mesh,
+        name=None,
         position=None,
         parent_node=None):
     """
@@ -54,10 +66,10 @@ def add_mesh(
 
     Args:
         scene (trimesh.Scene): メッシュを追加するシーン
-        name (str): メッシュの名前
         mesh (trimesh.Trimesh): メッシュ
+        name (str, optional): メッシュの名前(元の名前を上書きする場合に使用)
         position (list, optional): [x, y, z]の位置。Noneの場合は[0, 0, 0]
-        parent_node (str, optional): 親ノードの名前。Noneの場合は'world'
+        parent_node (trimesh.Trimesh, optional): 親ノード。Noneの場合は'world'
 
     Returns:
         trimesh.Scene: 更新されたシーン
@@ -67,10 +79,14 @@ def add_mesh(
         position = [0, 0, 0]
 
     if parent_node is None:
-        parent_node = 'world'
+        parent_node = scene_root(scene)
+    parent_node_uuid = parent_node.metadata['uuid']
 
     # metadata
-    mesh.metadata['name'] = name
+    if name is not None:
+        node_name = name
+    else:
+        node_name = mesh.metadata['name']
 
     # UUIDを付与してmeshに追加
     if 'uuid' not in mesh.metadata:
@@ -79,10 +95,10 @@ def add_mesh(
     mesh_uuid = mesh.metadata['uuid']
 
     # シーンにmeshを追加
-    scene.add_geometry(mesh, node_name=name)
-    if 'uuid_to_name' not in scene.metadata:
-        scene.metadata['uuid_to_name'] = {}
-    scene.metadata['uuid_to_name'][mesh_uuid] = name
+    # TODO: metadataに辞書があることを保証できるようにする
+    scene.add_geometry(mesh, node_name=node_name)
+    scene.metadata['uuid_to_name'][mesh_uuid] = node_name
+    scene.metadata['uuid_to_node'][mesh_uuid] = mesh
 
     # 変換行列を準備
     # TODO: 引数にする
@@ -94,7 +110,7 @@ def add_mesh(
     custom_transforms = scene.metadata.get('custom_transforms', {})
 
     # 親子関係と変換を更新
-    custom_hierarchy[name] = parent_node
+    custom_hierarchy[mesh_uuid] = parent_node_uuid
     custom_transforms[name] = transform
 
     # シーンのメタデータに保存し直す
@@ -243,7 +259,7 @@ def example_scene():
         ], dtype=np.float32),
         texture_path='./static/TestColorGrid.png',
     )
-    add_mesh(scene, 'triangle1', triangle1, position=[0, 0, 0], parent_node='world')
+    add_mesh(scene, triangle1, name='triangle1', position=[0, 0, 0], parent_node=None)
 
     # triangle2を追加（親はtriangle1）
     triangle2 = create_mesh_triangle(
@@ -266,7 +282,7 @@ def example_scene():
         ], dtype=np.float32),
         texture_path='./static/TestPicture.png',
     )
-    add_mesh(scene, 'triangle2', triangle2, position=[1.0, 1.0, 1.0], parent_node='triangle1')
+    add_mesh(scene, triangle2, 'triangle2', position=[1.0, 1.0, 1.0], parent_node=triangle1)
 
     # triangle3を追加（PBRMaterialを使用、親はtriangle1）
     pbr_material = trimesh.visual.material.PBRMaterial(
@@ -296,7 +312,7 @@ def example_scene():
         ], dtype=np.float32),
         material=pbr_material,
     )
-    add_mesh(scene, 'triangle3', triangle3, position=[-1.0, 0.0, 0.0], parent_node='triangle1')
+    add_mesh(scene, triangle3, 'triangle3', position=[-1.0, 0.0, 0.0], parent_node=triangle1)
 
     # triangle4を追加（SimpleMaterialを使用、親はtriangle1）
     simple_material = trimesh.visual.material.SimpleMaterial(
@@ -326,7 +342,7 @@ def example_scene():
         ], dtype=np.float32),
         material=simple_material,
     )
-    add_mesh(scene, 'triangle4', triangle4, position=[0.0, -1.0, 0.0], parent_node='triangle1')
+    add_mesh(scene, triangle4, 'triangle4', position=[0.0, -1.0, 0.0], parent_node=triangle1)
 
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
     custom_transforms = scene.metadata.get('custom_transforms', {})

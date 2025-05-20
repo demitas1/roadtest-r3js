@@ -30,32 +30,33 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
     custom_transforms = scene.metadata.get('custom_transforms', {})
     dict_uuid_to_name = scene.metadata.get('uuid_to_name', {})
+    dict_uuid_to_node = scene.metadata.get('uuid_to_node', {})
 
     if debug:
-        print("\nConverting using custom hierarchy:")
-        for node, parent in custom_hierarchy.items():
-            print(f"Node: {node}, Parent: {parent}")
-
-        print("\nScene graph nodes:")
-        for node in scene.graph.nodes:
-            print(f"- {node}")
-
-        print("\nScene graph nodes_geometry:")
-        for node in scene.graph.nodes_geometry:
-            print(f"- {node}")
-
-        print("\nScene node UUID:")
-        for geom_uuid, node_name in dict_uuid_to_name.items():
-            print(f"uuid {geom_uuid}: {node_name}")
-
         # scene.geometryの全ジオメトリをチェック
         print("\nScene geometries:")
         for geom_key, geometry in scene.geometry.items():
-            # ジオメトリのメタデータにUUIDがあるか確認
             if hasattr(geometry, 'metadata') and 'uuid' in geometry.metadata:
                 geom_uuid = geometry.metadata['uuid']
-                node_name = dict_uuid_to_name[geom_uuid]
+                node = dict_uuid_to_node[geom_uuid]
+                if node:
+                    node_name = node.metadata['name']
+                else:
+                    node_name = None
                 print(f"geometry key {geom_key}: uuid {geom_uuid}: node name: {node_name}")
+            else:
+                print(f"geometry key {geom_key}: (no uuid)")
+
+        # Custom の親子関係を表示
+        print("\nCustom hierarchy:")
+        for node_uuid, parent_uuid in custom_hierarchy.items():
+            node = dict_uuid_to_node[node_uuid]
+            node_name = node.metadata.get('name', None)
+            if parent_uuid is None:
+                print(f"Node: {node_uuid},{node_name} -> (No parent)")
+            else:
+                print(f"Node: {node_uuid},{node_name} -> parent {parent_uuid}")
+
 
     # シーンからメッシュ情報を取得
     meshes = {}
@@ -70,24 +71,25 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     # TODO: 名前からオブジェクトを引くのではなく、uuidを使用してマップを作る
 
     for geom_key, geom in scene.geometry.items():
+        if geom is None:
+            # ジオメトリを持たないオブジェクトは構造ノードとして扱う
+            print(f"Info: Node '{geom_key}' has no corresponding geometry, treating as structure node")
+            # TODO: 現在のコードは名前の衝突を考慮していない
+            structure_nodes.add(geom_key)
+            continue
+
         # ジオメトリ名はtrimeshによって変更される可能性があるので
         # uuidが一致するメッシュを探し、その名前（ユーザーによってつけられた名前）を得る
-        if hasattr(geom, 'metadata') and 'uuid' in geom.metadata:
+        if 'uuid' in geom.metadata:
             geom_uuid = geom.metadata['uuid']
-            node_name = dict_uuid_to_name.get(geom_uuid, None)
+            node_name = geom.metadata['name']
         else:
             # uuidを持っていないものがあれば付与する
             geom_uuid = str(uuid.uuid4())
             geom.metadata['uuid'] = geom_uuid
             node_name = geom_key
-            dict_uuid_to_name[geom_uuid] = node_name
-
-        if geom is None:
-            # ジオメトリを持たないオブジェクトは構造ノードとして扱う
-            print(f"Info: Node '{node_name}' has no corresponding geometry, treating as structure node")
-            # TODO: 現在のコードは名前の衝突を考慮していない
-            structure_nodes.add(node_name)
-            continue
+            geom.metadata['name'] = node_name
+            dict_uuid_to_node[geom_uuid] = geom
 
         if isinstance(geom, trimesh.Trimesh):  # メッシュ
             # 頂点座標、面情報、UV座標を取得
@@ -125,13 +127,13 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
             # TODO: 現在のコードは名前の衝突を考慮していない
             meshes[node_name] = {
+                'uuid': geom_uuid,
                 'node_name': node_name,
                 'vertices': vertices,
                 'faces': faces,
                 'uvs': uvs,
-                'mesh_obj': geom
+                'mesh_obj': geom,
             }
-
         elif isinstance(geom, trimesh.PointCloud):
             # PointCloudオブジェクトの処理
             if debug:
@@ -140,7 +142,6 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             # GLTFでは点群を扱うことができないため、小さなマーカーなどに変換する必要がある
             # ここでは省略して構造ノードとして扱う
             structure_nodes.add(node_name)
-
         elif isinstance(geom, trimesh.Path):
             # Pathオブジェクトの処理
             if debug:
@@ -149,7 +150,6 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             # GLTFでは線を扱うことができないため、必要に応じて変換する必要がある
             # ここでは省略して構造ノードとして扱う
             structure_nodes.add(node_name)
-
         else:
             # その他のジオメトリタイプ
             if debug:
@@ -219,7 +219,15 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             node_index += 1
 
         # 親子関係を設定
-        for node_name, parent_name in custom_hierarchy.items():
+        for node_uuid, parent_uuid in custom_hierarchy.items():
+            node = dict_uuid_to_node[node_uuid]
+            if parent_uuid is None:
+                continue  # 親なし (worldノード)
+            parent = dict_uuid_to_node[parent_uuid]
+
+            node_name = node.metadata.get('name', None)
+            parent_name = parent.metadata.get('name', None)
+
             if parent_name is not None and parent_name in nodes_dict and node_name in nodes_dict:
                 parent_index = nodes_dict[parent_name]
                 child_index = nodes_dict[node_name]
@@ -387,6 +395,8 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     node_index = 0
 
     # 有効なノード名のセットを作成 (メッシュノードとその親ノード、および構造ノード)
+    print(f'mesh_names: {mesh_names}')
+    print(f'structure_nodes: {structure_nodes}')
     valid_nodes = set(mesh_names) | structure_nodes
 
     # シーングラフを走査してノード構造を作成
@@ -425,8 +435,16 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         nodes_dict[node_name] = node_index
         node_index += 1
 
-    # 親子関係を設定 (カスタム階層を使用)
-    for node_name, parent_name in custom_hierarchy.items():
+    # 親子関係を設定
+    for node_uuid, parent_uuid in custom_hierarchy.items():
+        node = dict_uuid_to_node[node_uuid]
+        if parent_uuid is None:
+            continue  # 親なし (worldノード)
+        parent = dict_uuid_to_node[parent_uuid]
+
+        node_name = node.metadata.get('name', None)
+        parent_name = parent.metadata.get('name', None)
+
         if parent_name is not None and parent_name in nodes_dict and node_name in nodes_dict:
             parent_index = nodes_dict[parent_name]
             child_index = nodes_dict[node_name]
