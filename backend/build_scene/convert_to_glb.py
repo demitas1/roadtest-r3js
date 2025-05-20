@@ -1,5 +1,6 @@
 import trimesh
 import numpy as np
+from scipy.spatial.transform import Rotation
 from PIL import Image
 import struct
 import io
@@ -10,6 +11,55 @@ from pygltflib import Buffer, BufferView, Accessor, Material, PbrMetallicRoughne
 from pygltflib import Texture, Sampler, Image as GLTFImage, TextureInfo
 
 from .constants import *
+
+
+def decompose_transform_matrix(transform):
+    # 変換を分解: 平行移動、回転、スケールに
+    translation = transform[:3, 3].tolist()
+
+    # 回転行列部分を抽出
+    rotation_matrix = transform[:3, :3]
+
+    # SVD（特異値分解）を使用して回転とスケールを分離
+    try:
+        # NumPyのSVD分解を使用
+        U, S, Vt = np.linalg.svd(rotation_matrix)
+
+        # 回転行列 = U * Vt (純粋な回転成分)
+        pure_rotation = np.dot(U, Vt)
+
+        # SVDの結果、特異値Sがスケール成分になる
+        scale = S.tolist()
+
+        # 行列式がマイナスの場合（左手系）の処理
+        det = np.linalg.det(pure_rotation)
+        if det < 0:
+            # 左手系になる場合の修正（最後の列を反転）
+            U[:, -1] = -U[:, -1]
+            scale[-1] = -scale[-1]
+            pure_rotation = np.dot(U, Vt)
+
+        # 回転行列から四元数へ変換
+        r = Rotation.from_matrix(pure_rotation)
+        quat = r.as_quat()  # [x, y, z, w]の順
+        rotation = quat.tolist()
+        result = True
+        error_msg = ""
+
+    except Exception as e:
+        # 行列分解に失敗した場合はデフォルト値を使用
+        rotation = [0.0, 0.0, 0.0, 1.0]  # デフォルトの回転なし(x, y, z, w)
+        scale = [1.0, 1.0, 1.0]  # デフォルトのスケール
+        result = False
+        error_msg = "Failed to decompose transformation matrix. Using default rotation and scale values"
+
+    return {
+        'translation':translation,
+        'rotation': rotation,
+        'scale': scale,
+        'success': result,
+        'error': error_msg,
+    }
 
 
 def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
@@ -213,11 +263,16 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
 
             # 変換を分解: 平行移動、回転、スケールに
-            translation = transform[:3, 3].tolist()
+            result = decompose_transform_matrix(transform)
+            if not result['success']:
+                msg = result['error']
+                print(f"{node_uuid}: {msg}")
+            translation = result['translation']
+            rotation = result['rotation']
+            scale = result['scale']
 
-            # デフォルトの回転とスケール
-            rotation = [0.0, 0.0, 0.0, 1.0]
-            scale = [1.0, 1.0, 1.0]
+        if debug:
+            print(f"{node_uuid}:{node_name}: translation={translation}, rotation={rotation}, scale={scale}")
 
             # ノード情報を追加
             node_info = {
@@ -592,15 +647,17 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
 
         # 変換を分解: 平行移動、回転、スケールに
-        translation = transform[:3, 3].tolist()
-        print(f"{node_uuid}:{node_name}: translation={translation}")
+        # TODO: 別モジュールにする際に結果をクラス化する
+        result = decompose_transform_matrix(transform)
+        if not result['success']:
+            msg = result['error']
+            print(f"{node_uuid}: {msg}")
+        translation = result['translation']
+        rotation = result['rotation']
+        scale = result['scale']
 
-        # 回転は四元数に変換する必要がある
-        # この例では簡略化して単位四元数を使用
-        rotation = [0.0, 0.0, 0.0, 1.0]  # デフォルトの回転なし(x, y, z, w)
-
-        # スケールは行列から抽出（簡易化）
-        scale = [1.0, 1.0, 1.0]  # デフォルトのスケール
+        if debug:
+            print(f"{node_uuid}:{node_name}: translation={translation}, rotation={rotation}, scale={scale}")
 
         # ノードを作成
         node = Node(
