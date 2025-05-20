@@ -85,14 +85,15 @@ function App() {
               // シーンの再読み込みをトリガー
               setReloadScene(prev => prev + 1)
               setStatusMessage('シーン1に切り替えました')
-            } else if (jsonData['new scene'] === 'scene2') {
+            } else if (jsonData['new scene'] === 'scene2' || jsonData['new scene'] === 'scene3') {
               console.log(`コマンドを受信しました ${jsonData}`)
               if ("gltf_path" in jsonData) {
                 // 新しいシーンURLを設定
                 const glbPath: string = jsonData["gltf_path"];
                 const sceneUrl: string = `http://localhost:8000/${glbPath}`;
                 console.log(`new scene url: ${sceneUrl}`);
-                setCurrentSceneUrl('http://localhost:8000/static/output.glb')
+                const scene_url = `http://localhost:8000/${glbPath}`
+                setCurrentSceneUrl(scene_url)
                 // メッシュ情報をリセット
                 setMeshInfos([])
                 setSelectedMesh(null)

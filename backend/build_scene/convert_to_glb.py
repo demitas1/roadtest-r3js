@@ -234,6 +234,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
 
         # バイナリバッファが一つもない場合GLBを作成できないので
         # pygltflibを使わずに直接バッファなしの純粋なノード構造のGLTFを生成
+        # TODO: GLTF作成を別モジュールに分離
 
         # GLTF構造を構築
         gltf_json = {
@@ -358,6 +359,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         }
 
     # 以降はバイナリバッファがある場合の処理
+    # TODO: GLB作成を別モジュールに分離
 
     # テクスチャが存在しないメッシュ用のダミーテクスチャ作成
     for node_uuid, node_info in meshes.items():
@@ -647,7 +649,6 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             transform = scene.graph[node_name][0] if node_name in scene.graph else np.eye(4)
 
         # 変換を分解: 平行移動、回転、スケールに
-        # TODO: 別モジュールにする際に結果をクラス化する
         result = decompose_transform_matrix(transform)
         if not result['success']:
             msg = result['error']
@@ -687,7 +688,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             child_index = nodes_dict[node_uuid]
 
             # 親ノードの子リストを更新
-            if not hasattr(gltf.nodes[parent_index], 'children') or gltf.nodes[parent_index].children is None:
+            if gltf.nodes[parent_index].children is None:
                 gltf.nodes[parent_index].children = []
 
             # 既に子リストに追加されていない場合のみ追加
