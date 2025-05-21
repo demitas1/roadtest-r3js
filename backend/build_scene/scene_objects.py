@@ -31,11 +31,8 @@ def empty_scene():
         world_uuid: identity
     }
 
-    # UUID->ノード名のマッピング
-    # trimeshがgeometryにnodeとは異なる名称を付与する場合があるのでトラックする目的
-    scene.metadata['uuid_to_name'] = {}
-    scene.metadata['uuid_to_name'][world_uuid] = 'world'
     # UUID->ノードのマッピング
+    # trimeshがgeometryにnodeとは異なる名称を付与する場合があるのでトラックする目的
     scene.metadata['uuid_to_node'] = {}
     scene.metadata['uuid_to_node'][world_uuid] = world_geom
 
@@ -84,9 +81,12 @@ def add_mesh(
 
     # metadata
     if name is not None:
+        # 元の名前を上書き
         node_name = name
+        mesh.metadata['name'] = name
     else:
-        node_name = mesh.metadata['name']
+        # metadata内の名前を使用する
+        node_name = mesh.metadata.get('name', None)
 
     # UUIDを付与してmeshに追加
     if 'uuid' not in mesh.metadata:
@@ -97,7 +97,6 @@ def add_mesh(
     # シーンにmeshを追加
     # TODO: metadataに辞書があることを保証できるようにする
     scene.add_geometry(mesh, node_name=node_name)
-    scene.metadata['uuid_to_name'][mesh_uuid] = node_name
     scene.metadata['uuid_to_node'][mesh_uuid] = mesh
 
     # 変換行列を準備
@@ -218,7 +217,7 @@ def create_mesh_triangle(
             )
             mesh.visual.material = material
 
-    # metadata を作成
+    # metadata に名前とuuidを作成
     mesh.metadata['name'] = name
     mesh_uuid = str(uuid.uuid4())
     mesh.metadata['uuid'] = mesh_uuid
