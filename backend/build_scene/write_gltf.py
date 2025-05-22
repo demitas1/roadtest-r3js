@@ -215,11 +215,23 @@ def write_gltf_binary(
         debug=True,
     ):
 
-    # 各種バッファ
+    # Trimesh用各種バッファ
     vertex_data = {}
     index_data = {}
     uv_data = {}
     image_data = {}
+
+    # GLTF用バッファ
+    buffer_data = bytearray()
+    offsets = {}  # オフセット情報を保持する辞書
+    current_offset = 0  # 現在のオフセット位置
+
+    # GLTFバッファビュー、アクセサ、テクスチャを追跡するための辞書
+    buffer_views = {}
+    accessors = {}
+    textures = {}
+    materials = {}
+    mesh_indices = {}  # uuid -> mesh index の辞書
 
     # PBR テクスチャタイプ
     texture_types = [
@@ -265,23 +277,20 @@ def write_gltf_binary(
                 texture_images[k_texture].save(image_buffer, format="PNG")
                 image_data[k_texture] = image_buffer.getvalue()
             else:
+                pass
                 # ダミーテクスチャデータ (白い2x2ピクセル)
-                if debug:
-                    print(f"added dummy texture for {mesh_name}:{k_texture}")
-                dummy_buffer = io.BytesIO()
-                dummy_texture = Image.new('RGB', (2, 2), color='white')
-                dummy_texture.save(dummy_buffer, format="PNG")
-                image_data[k_texture] = dummy_buffer.getvalue()
+                # TODO: 不要と思われるので調査
+                #if debug:
+                #    print(f"added dummy texture for {mesh_name}:{k_texture}")
+                #dummy_buffer = io.BytesIO()
+                #dummy_texture = Image.new('RGB', (2, 2), color='white')
+                #dummy_texture.save(dummy_buffer, format="PNG")
+                #image_data[k_texture] = dummy_buffer.getvalue()
 
     print(f'{len(image_data.keys())} image_data:')
     if debug:
         for k in image_data.keys():
             print(f'image_data key: {k}')
-
-    # バッファ全体を構築
-    buffer_data = bytearray()
-    offsets = {}  # オフセット情報を保持する辞書
-    current_offset = 0  # 現在のオフセット位置
 
     # 各メッシュのデータを順番にバッファに追加
     for mesh_uuid, mesh_info in meshes.items():
@@ -313,8 +322,7 @@ def write_gltf_binary(
         # 画像データを最後にまとめて追加
         for texture_type in texture_types:
             k_texture = f'{mesh_uuid}_{texture_type}'
-            for mesh_uuid, mesh_info in meshes.items():
-                mesh_name = mesh_info['node_name']
+            if k_texture in image_data:
                 offsets[k_texture] = {
                     'offset': current_offset,
                     'length': len(image_data[k_texture])
@@ -338,16 +346,11 @@ def write_gltf_binary(
     # バッファ、バッファビュー、アクセサの設定
     gltf.buffers.append(Buffer(byteLength=len(buffer_data)))
 
-    # バッファビュー、アクセサ、テクスチャを追跡するための辞書
-    buffer_views = {}
-    accessors = {}
-    textures = {}
-    materials = {}
-    mesh_indices = {}  # uuid -> mesh index の辞書
-
     # 各メッシュのバッファビューとアクセサを作成
     for mesh_uuid, mesh_info in meshes.items():
         mesh_name = mesh_info['node_name']
+        mesh_object = dict_uuid_to_node[mesh_uuid]
+
         # 頂点データのバッファビュー
         vertex_buffer_view = BufferView(
             buffer=0,
@@ -435,7 +438,6 @@ def write_gltf_binary(
         # イメージ
         # TODO: PBR テクスチャの複数イメージに対応
         created_texture_types = {}
-
         for texture_type in texture_types:
             k_texture = f'{mesh_uuid}_{texture_type}'
             if k_texture in buffer_views:
@@ -465,27 +467,98 @@ def write_gltf_binary(
                 )
                 gltf.textures.append(texture)
                 textures[k_texture] = len(gltf.textures) - 1
-                created_texture_types[texture_type] = len(gltf.textures) - 1
+                created_texture_types[k_texture] = len(gltf.textures) - 1
+
+        mesh_material = mesh_object.visual.material
+        is_pbr = isinstance(mesh_material, trimesh.visual.material.PBRMaterial)
 
         # マテリアル
         # TODO: PBR Material 対応
         # TODO: PBR テクスチャの複数イメージに対応
-        texture_type = "baseColorTexture"
-        k_texture = f'{mesh_uuid}_{texture_type}'
+        pbr_metallic_roughness = PbrMetallicRoughness()
 
-        material = Material(
+        # baseColorFactor
+        if hasattr(mesh_material, 'baseColorFactor') and mesh_material.baseColorFactor is not None:
+            f = (mesh_material.baseColorFactor / 255.0).tolist()
+            print(f'baseColorFactor {f}')
+            pbr_metallic_roughness.baseColorFactor = f
+        else:
+            pbr_metallic_roughness.baseColorFactor = [1.0, 1.0, 1.0, 1.0]  # default value
+
+        # metallicFactor
+        if hasattr(mesh_material, 'metallicFactor') and mesh_material.metallicFactor is not None:
+            pbr_metallic_roughness.metallicFactor = mesh_material.metallicFactor
+        else:
+            pbr_metallic_roughness.metallicFactor = 0.0  # default value
+
+        # roughnessFactor
+        if hasattr(mesh_material, 'roughnessFactor') and mesh_material.roughnessFactor is not None:
+            pbr_metallic_roughness.roughnessFactor = mesh_material.roughnessFactor
+        else:
+            pbr_metallic_roughness.roughnessFactor = 1.0  # default value
+
+        # PBRマテリアル各テクスチャ情報の設定
+        k = f'{mesh_uuid}_baseColorTexture'
+        if k in created_texture_types:
+            pbr_metallic_roughness.baseColorTexture = TextureInfo(
+                index=created_texture_types[k]
+            )
+
+        k = f'{mesh_uuid}_metallicRoughnessTexture'
+        if k in created_texture_types:
+            pbr_metallic_roughness.metallicRoughnessTexture = TextureInfo(
+                index=created_texture_types[k]
+            )
+
+        gltf_material = Material(
             name=k_texture,
-            pbrMetallicRoughness=PbrMetallicRoughness(
-                baseColorTexture=TextureInfo(
-                    index=textures[k_texture],
-                ),
-                metallicFactor=0.0,
-                roughnessFactor=1.0
-            ),
+            pbrMetallicRoughness=pbr_metallic_roughness,
             alphaMode="OPAQUE",
+            alphaCutoff=None,  # alphaCutoffを明示的に削除
         )
-        material.alphaCutoff = None  # alphaCutoffを明示的に削除
-        gltf.materials.append(material)
+
+        # 追加のPBRプロパティ
+        if is_pbr:
+            # emissiveFactor
+            if hasattr(mesh_material, 'emissiveFactor') and mesh_material.emissiveFactor is not None:
+                gltf_material.emissiveFactor = mesh_material.emissiveFactor
+
+            # normalTexture
+            k = f'{mesh_uuid}_normalTexture'
+            if k in created_texture_types:
+                gltf_material.normalTexture = TextureInfo(
+                    index=created_texture_types[k]
+                )
+                if hasattr(mesh_material, 'normalScale') and mesh_material.normalScale is not None:
+                    gltf_material.normalTexture.scale = mesh_material.normalScale
+
+            # occlusionTexture
+            k = f'{mesh_uuid}_occlusionTexture'
+            if k in created_texture_types:
+                gltf_material.occlusionTexture = TextureInfo(
+                    index=created_texture_types[k]
+                )
+                if hasattr(mesh_material, 'occlusionStrength') and mesh_material.occlusionStrength is not None:
+                    gltf_material.occlusionTexture.strength = mesh_material.occlusionStrength
+
+            # emissiveTexture
+            k = f'{mesh_uuid}_emissiveTexture'
+            if k in created_texture_types:
+                gltf_material.emissiveTexture = TextureInfo(
+                    index=created_texture_types[k]
+                )
+
+            # alphaMode と alphaCutoff
+            if hasattr(mesh_material, 'alphaMode') and mesh_material.alphaMode is not None:
+                gltf_material.alphaMode = mesh_material.alphaMode
+                if mesh_material.alphaMode == "MASK" and hasattr(mesh_material, 'alphaCutoff') and mesh_material.alphaCutoff is not None:
+                    gltf_material.alphaCutoff = mesh_material.alphaCutoff
+                else:
+                    gltf_material.alphaCutoff = None
+            else:
+                gltf_material.alphaCutoff = None
+
+        gltf.materials.append(gltf_material)
         materials[mesh_uuid] = len(gltf.materials) - 1
 
         # プリミティブとメッシュ
@@ -622,13 +695,6 @@ def write_gltf_binary(
 
     # バイナリデータを設定
     gltf.set_binary_blob(buffer_data)
-
-    # 実際のGLBデータ生成前にJSON構造から'alphaCutoff'を削除
-    if hasattr(gltf, '_json_dict') and '_json_dict' in dir(gltf):
-        if 'materials' in gltf._json_dict and len(gltf._json_dict['materials']) > 0:
-            for mat in gltf._json_dict['materials']:
-                if 'alphaCutoff' in mat:
-                    del mat['alphaCutoff']
 
     # GLBとして保存
     gltf.save(output_path)

@@ -60,9 +60,10 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             texture_image = getattr(material, texture_type)
             if texture_image is not None:
                 # テクスチャタイプに応じたキーでイメージを保存
-                texture_images[mesh_uuid + "_" + texture_type] = texture_image
+                k_texture = f'{mesh_uuid}_{texture_type}'
+                texture_images[k_texture] = texture_image
                 if debug:
-                    print(f"Found {texture_type} for mesh {mesh_uuid}")
+                    print(f"PBR material texture {k_texture} for mesh {mesh_uuid}")
 
     # シーンのメッシュを探索し、バイナリバッファに格納するデータ (vertex, face, uv, texture) をすべて抽出
     for geom_key, geom in scene.geometry.items():
@@ -107,6 +108,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 uvs = geom.visual.uv.astype(np.float32)
             else:
                 # UVがない場合は頂点数分のデフォルト値を作成
+                print(f'{node_name} {geom_uuid}: No UVs. set zeros')
                 uvs = np.zeros((len(vertices), 2), dtype=np.float32)
 
             # テクスチャ画像の取得

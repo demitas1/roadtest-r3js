@@ -151,59 +151,27 @@ def create_mesh_triangle(
             # TODO: デフォルトマテリアルを作成する
             pass
 
-
-        # TODO: PBR Materialのテクスチャ設定が出来るようにする
-        # 例:
-        #   material = trimesh.visual.material.PBRMaterial(
-        #       name="material_with_texture",
-        #       # 基本的なPBRマテリアル属性
-        #       metallicFactor=0.5,
-        #       roughnessFactor=0.3,
-        #       baseColorFactor=[1.0, 1.0, 1.0, 1.0],
-        #       emissiveFactor=[0.0, 0.0, 0.0],
-        #       normalScale=1.0,
-        #       occlusionStrength=1.0,
-        # テクスチャマップの設定
-        #       baseColorTexture=trimesh.visual.texture.Texture(
-        #           image=texture_image,
-        #           name="basecolor_texture"
-        #       ),
-        # 他のテクスチャマップも必要に応じて設定
-        #       metallicRoughnessTexture=trimesh.visual.texture.Texture(...),
-        #       normalTexture=trimesh.visual.texture.Texture(...),
-        #       occlusionTexture=trimesh.visual.texture.Texture(...),
-        #       emissiveTexture=trimesh.visual.texture.Texture(...)
-
-
         # PBRMaterialを使用する場合
-        if isinstance(material, trimesh.visual.material.PBRMaterial):
-            # face_colorsを設定（material.baseColorFactorを使用）
-            color = material.baseColorFactor[:3]  # RGB部分だけ取得
-            face_colors = np.array([color for _ in range(len(faces))], dtype=np.float32)
-
+        elif isinstance(material, trimesh.visual.material.PBRMaterial):
             # メッシュを生成してマテリアルを設定
+            visual = trimesh.visual.TextureVisuals(uv=uvs, material=material)
             mesh = trimesh.Trimesh(
                 vertices=vertices,
                 faces=faces,
-                face_colors=face_colors,
+                visual=visual,
                 process=False
             )
-            mesh.visual.material = material
 
         # SimpleMaterialを使用する場合
         elif isinstance(material, trimesh.visual.material.SimpleMaterial):
-            # face_colorsを設定（material.diffuseを使用）
-            color = material.diffuse
-            face_colors = np.array([color for _ in range(len(faces))], dtype=np.float32)
-
             # メッシュを生成してマテリアルを設定
+            visual = trimesh.visual.TextureVisuals(uv=uvs, material=material)
             mesh = trimesh.Trimesh(
                 vertices=vertices,
                 faces=faces,
-                face_colors=face_colors,
+                visual=visual,
                 process=False
             )
-            mesh.visual.material = material
 
         # その他のマテリアルタイプ
         else:
@@ -288,9 +256,9 @@ def example_scene():
 
     pbr_material = trimesh.visual.material.PBRMaterial(
         name='pbr_square',
-        baseColorFactor=[1.0, 0.0, 0.0, 1.0],  # 赤色
+        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
         metallicFactor=0.8,
-        roughnessFactor=0.2,
+        roughnessFactor=0.9,
         baseColorTexture=image_basecolor_1,
     )
 
