@@ -54,6 +54,17 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
     texture_images = {}  # node uuid をキーとした画像データを保持する辞書
     structure_nodes = {}  # 構造ノード（メッシュがないノード）の辞書
 
+    # テクスチャ画像をマテリアルから取り出し、辞書に格納する関数
+    def process_texture(mesh_uuid, material, texture_type, texture_images):
+        if hasattr(material, texture_type) and getattr(material, texture_type) is not None:
+            texture_image = getattr(material, texture_type)
+            if texture_image is not None:
+                # テクスチャタイプに応じたキーでイメージを保存
+                texture_images[mesh_uuid + "_" + texture_type] = texture_image
+                if debug:
+                    print(f"Found {texture_type} for mesh {mesh_uuid}")
+
+    # シーンのメッシュを探索し、バイナリバッファに格納するデータ (vertex, face, uv, texture) をすべて抽出
     for geom_key, geom in scene.geometry.items():
         if geom is None:
             # 通常のtrimeshシーンでNoneとなることはないはず
@@ -99,15 +110,30 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
                 uvs = np.zeros((len(vertices), 2), dtype=np.float32)
 
             # テクスチャ画像の取得
-            # TODO: PBR Material への対応
-            if hasattr(geom.visual, 'material') and hasattr(geom.visual.material, 'image'):
-                image = geom.visual.material.image
-                texture_images[geom_uuid] = image
-            elif hasattr(geom.visual, 'material') and hasattr(geom.visual.material, 'texture'):
-                # textureプロパティからイメージを取得
-                texture = geom.visual.material.texture
-                if hasattr(texture, 'image'):
-                    texture_images[geom_uuid] = texture.image
+            if hasattr(geom.visual, 'material'):
+                material = geom.visual.material
+                # PBRマテリアルか？
+                is_pbr = isinstance(material, trimesh.visual.material.PBRMaterial)
+
+                if is_pbr:
+                    # PBR Material で使用されているテクスチャを取得
+                    print(f"PBR Material is used in {geom_uuid}:{node_name}")
+                    process_texture(geom_uuid, material, 'baseColorTexture', texture_images)
+                    process_texture(geom_uuid, material, 'metallicRoughnessTexture', texture_images)
+                    process_texture(geom_uuid, material, 'normalTexture', texture_images)
+                    process_texture(geom_uuid, material, 'occlusionTexture', texture_images)
+                    process_texture(geom_uuid, material, 'emissiveTexture', texture_images)
+                else:
+                    # trimeshの通常テクスチャの場合, textureプロパティからイメージを取得
+                    # TODO: テクスチャ画像は GLTF の PbrMetallicRoughness.baseColorTexture にセーブされる
+                    #       PBRマテリアルの場合と同じキー名 "{uuid}_baseColorTexture" にあわせる
+                    if hasattr(material, 'image'):
+                        image = material.image
+                        texture_images[geom_uuid + "_baseColorTexture"] = image
+                    elif hasattr(material, 'texture'):
+                        texture = material.texture
+                        if hasattr(texture, 'image'):
+                            texture_images[geom_uuid + "_baseColorTexture"] = texture.image
 
             # 有効な頂点を持つメッシュとして追加
             meshes[geom_uuid] = {

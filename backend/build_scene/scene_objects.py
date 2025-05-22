@@ -284,11 +284,14 @@ def example_scene():
     add_mesh(scene, triangle2, 'triangle2', position=[1.0, 1.0, 1.0], parent_node=triangle1)
 
     # triangle3を追加（PBRMaterialを使用、親はtriangle1）
+    image_basecolor_1 = Image.open('./static/TestPicture.png')
+
     pbr_material = trimesh.visual.material.PBRMaterial(
         name='pbr_square',
         baseColorFactor=[1.0, 0.0, 0.0, 1.0],  # 赤色
         metallicFactor=0.8,
-        roughnessFactor=0.2
+        roughnessFactor=0.2,
+        baseColorTexture=image_basecolor_1,
     )
 
     triangle3 = create_mesh_triangle(

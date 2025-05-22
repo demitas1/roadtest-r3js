@@ -214,21 +214,26 @@ def write_gltf_binary(
         texture_images,
         debug=True,
     ):
-    # テクスチャが存在しないメッシュ用のダミーテクスチャ作成
-    for node_uuid, node_info in meshes.items():
-        node_name = node_info['node_name']
-        if node_uuid not in texture_images:
-            # ダミーテクスチャを作成して保存
-            if debug:
-                print(f"Info: Creating dummy texture for mesh '{node_uuid}:{node_name}'")
-            dummy_texture = Image.new('RGB', (2, 2), color='white')
-            texture_images[node_uuid] = dummy_texture
 
-    # バッファの準備
+    # 各種バッファ
     vertex_data = {}
     index_data = {}
     uv_data = {}
     image_data = {}
+
+    # PBR テクスチャタイプ
+    texture_types = [
+        "baseColorTexture",
+        "metallicRoughnessTexture",
+        "normalTexture",
+        "occlusionTexture",
+        "emissiveTexture",
+    ]
+
+    print(f'{len(texture_images.keys())} texture_image:')
+    if debug:
+        for k in texture_images.keys():
+            print(f'texture key: {k}')
 
     # 各メッシュのバイナリデータを準備
     for mesh_uuid, mesh_info in meshes.items():
@@ -253,16 +258,25 @@ def write_gltf_binary(
             uv_data[mesh_uuid].extend(struct.pack('ff', *flipped_uv))
 
         # 画像データ
-        if mesh_uuid in texture_images and texture_images[mesh_uuid] is not None:
-            image_buffer = io.BytesIO()
-            texture_images[mesh_uuid].save(image_buffer, format="PNG")
-            image_data[mesh_uuid] = image_buffer.getvalue()
-        else:
-            # ダミーテクスチャデータ (白い2x2ピクセル)
-            dummy_buffer = io.BytesIO()
-            dummy_texture = Image.new('RGB', (2, 2), color='white')
-            dummy_texture.save(dummy_buffer, format="PNG")
-            image_data[mesh_uuid] = dummy_buffer.getvalue()
+        for texture_type in texture_types:
+            k_texture = f'{mesh_uuid}_{texture_type}'
+            if k_texture in texture_images and texture_images[k_texture] is not None:
+                image_buffer = io.BytesIO()
+                texture_images[k_texture].save(image_buffer, format="PNG")
+                image_data[k_texture] = image_buffer.getvalue()
+            else:
+                # ダミーテクスチャデータ (白い2x2ピクセル)
+                if debug:
+                    print(f"added dummy texture for {mesh_name}:{k_texture}")
+                dummy_buffer = io.BytesIO()
+                dummy_texture = Image.new('RGB', (2, 2), color='white')
+                dummy_texture.save(dummy_buffer, format="PNG")
+                image_data[k_texture] = dummy_buffer.getvalue()
+
+    print(f'{len(image_data.keys())} image_data:')
+    if debug:
+        for k in image_data.keys():
+            print(f'image_data key: {k}')
 
     # バッファ全体を構築
     buffer_data = bytearray()
@@ -296,15 +310,22 @@ def write_gltf_binary(
         buffer_data.extend(uv_data[mesh_uuid])
         current_offset += len(uv_data[mesh_uuid])
 
-    # 画像データを最後にまとめて追加
-    for mesh_uuid, mesh_info in meshes.items():
-        mesh_name = mesh_info['node_name']
-        offsets[f'{mesh_uuid}_image'] = {
-            'offset': current_offset,
-            'length': len(image_data[mesh_uuid])
-        }
-        buffer_data.extend(image_data[mesh_uuid])
-        current_offset += len(image_data[mesh_uuid])
+        # 画像データを最後にまとめて追加
+        for texture_type in texture_types:
+            k_texture = f'{mesh_uuid}_{texture_type}'
+            for mesh_uuid, mesh_info in meshes.items():
+                mesh_name = mesh_info['node_name']
+                offsets[k_texture] = {
+                    'offset': current_offset,
+                    'length': len(image_data[k_texture])
+                }
+                buffer_data.extend(image_data[k_texture])
+                current_offset += len(image_data[k_texture])
+
+    print(f'{len(offsets.keys())} offsets:')
+    if debug:
+        for k in offsets.keys():
+            print(f'offset key: {k}')
 
     # pygltflib構造の作成
     gltf = GLTF2()
@@ -358,13 +379,16 @@ def write_gltf_binary(
         buffer_views[f'{mesh_uuid}_uv'] = len(gltf.bufferViews) - 1
 
         # イメージデータのバッファビュー
-        image_buffer_view = BufferView(
-            buffer=0,
-            byteOffset=offsets[f'{mesh_uuid}_image']['offset'],
-            byteLength=offsets[f'{mesh_uuid}_image']['length']
-        )
-        gltf.bufferViews.append(image_buffer_view)
-        buffer_views[f'{mesh_uuid}_image'] = len(gltf.bufferViews) - 1
+        for texture_type in texture_types:
+            k_texture = f'{mesh_uuid}_{texture_type}'
+            if k_texture in offsets:
+                image_buffer_view = BufferView(
+                    buffer=0,
+                    byteOffset=offsets[k_texture]['offset'],
+                    byteLength=offsets[k_texture]['length']
+                )
+                gltf.bufferViews.append(image_buffer_view)
+                buffer_views[k_texture] = len(gltf.bufferViews) - 1
 
         # 頂点データのアクセサ
         vertices_np = meshes[mesh_uuid]['vertices']
@@ -409,40 +433,56 @@ def write_gltf_binary(
         accessors[f'{mesh_uuid}_texcoord'] = len(gltf.accessors) - 1
 
         # イメージ
-        image = GLTFImage(
-            name=f"{mesh_uuid}_texture",
-            mimeType="image/png",
-            bufferView=buffer_views[f'{mesh_uuid}_image']
-        )
-        gltf.images.append(image)
+        # TODO: PBR テクスチャの複数イメージに対応
+        created_texture_types = {}
 
-        # サンプラー（まだない場合は追加）
-        if len(gltf.samplers) == 0:
-            sampler = Sampler(
-                magFilter=9729,  # LINEAR
-                minFilter=9729,  # LINEAR
-                wrapS=10497,     # REPEAT
-                wrapT=10497      # REPEAT
-            )
-            gltf.samplers.append(sampler)
+        for texture_type in texture_types:
+            k_texture = f'{mesh_uuid}_{texture_type}'
+            if k_texture in buffer_views:
+                image = GLTFImage(
+                    name=k_texture,
+                    mimeType="image/png",
+                    bufferView=buffer_views[k_texture]
+                )
+                gltf.images.append(image)
+                image_index = len(gltf.images) - 1
 
-        # テクスチャ
-        texture = Texture(
-            sampler=0,
-            source=len(gltf.images) - 1
-        )
-        gltf.textures.append(texture)
-        textures[mesh_uuid] = len(gltf.textures) - 1
+                # サンプラー（まだない場合は追加）
+                if len(gltf.samplers) == 0:
+                    sampler = Sampler(
+                        magFilter=9729,  # LINEAR
+                        minFilter=9729,  # LINEAR
+                        wrapS=10497,     # REPEAT
+                        wrapT=10497      # REPEAT
+                    )
+                    gltf.samplers.append(sampler)
+
+                # テクスチャ
+                # TODO: PBR テクスチャの複数イメージに対応
+                texture = Texture(
+                    sampler=0,
+                    source=image_index
+                )
+                gltf.textures.append(texture)
+                textures[k_texture] = len(gltf.textures) - 1
+                created_texture_types[texture_type] = len(gltf.textures) - 1
 
         # マテリアル
+        # TODO: PBR Material 対応
+        # TODO: PBR テクスチャの複数イメージに対応
+        texture_type = "baseColorTexture"
+        k_texture = f'{mesh_uuid}_{texture_type}'
+
         material = Material(
-            name=f"{mesh_uuid}_material",
+            name=k_texture,
             pbrMetallicRoughness=PbrMetallicRoughness(
-                baseColorTexture=TextureInfo(index=textures[mesh_uuid]),
+                baseColorTexture=TextureInfo(
+                    index=textures[k_texture],
+                ),
                 metallicFactor=0.0,
                 roughnessFactor=1.0
             ),
-            alphaMode="OPAQUE"
+            alphaMode="OPAQUE",
         )
         material.alphaCutoff = None  # alphaCutoffを明示的に削除
         gltf.materials.append(material)
