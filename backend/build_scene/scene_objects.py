@@ -3,6 +3,8 @@ import numpy as np
 from PIL import Image
 import uuid
 
+from .utils import compose_transform_matrix
+
 
 def empty_scene():
     """
@@ -57,6 +59,8 @@ def add_mesh(
         mesh,
         name=None,
         position=None,
+        rotation=None,
+        scale=None,
         parent_node=None):
     """
     trimesh メッシュをシーンに追加する
@@ -100,9 +104,10 @@ def add_mesh(
     scene.metadata['uuid_to_node'][mesh_uuid] = mesh
 
     # 変換行列を準備
-    # TODO: 引数にする
-    transform = np.eye(4)
-    transform[:3, 3] = position  # X,Y,Z方向の移動
+    transform = compose_transform_matrix(
+        translation=position,
+        rotation=rotation,
+        scale=scale)
 
     # 既存のメタデータを取得
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
@@ -162,7 +167,7 @@ def create_mesh_triangle(
                 process=False
             )
 
-        # SimpleMaterialを使用する場合
+        # SimpleMaterialを使用する場合 (未対応)
         elif isinstance(material, trimesh.visual.material.SimpleMaterial):
             # メッシュを生成してマテリアルを設定
             visual = trimesh.visual.TextureVisuals(uv=uvs, material=material)
@@ -249,16 +254,16 @@ def example_scene():
         ], dtype=np.float32),
         texture_path='./static/TestPicture.png',
     )
-    add_mesh(scene, triangle2, 'triangle2', position=[1.0, 1.0, 1.0], parent_node=triangle1)
+    add_mesh(scene, triangle2, 'triangle2', position=[1.0, 1.0, 0.0], parent_node=triangle1)
 
     # triangle3を追加（PBRMaterialを使用、親はtriangle1）
     image_basecolor_1 = Image.open('./static/TestPicture.png')
 
-    pbr_material = trimesh.visual.material.PBRMaterial(
+    pbr_material_3 = trimesh.visual.material.PBRMaterial(
         name='pbr_square',
         baseColorFactor=[1.0, 1.0, 1.0, 1.0],
-        metallicFactor=0.8,
-        roughnessFactor=0.9,
+        metallicFactor=0.9,
+        roughnessFactor=0.3,
         baseColorTexture=image_basecolor_1,
     )
 
@@ -280,16 +285,25 @@ def example_scene():
             [1, 0],  # 頂点2のUV: 右下
             [1, 1],  # 頂点2のUV: 右上
         ], dtype=np.float32),
-        material=pbr_material,
+        material=pbr_material_3,
     )
-    add_mesh(scene, triangle3, 'triangle3', position=[-1.0, 0.0, 0.0], parent_node=triangle1)
+    add_mesh(scene, triangle3, 'triangle3', position=[-1.0, 1.0, 0.0], parent_node=triangle1)
 
-    # triangle4を追加（SimpleMaterialを使用、親はtriangle1）
-    simple_material = trimesh.visual.material.SimpleMaterial(
-        diffuse=[0.0, 0.0, 1.0],  # 青色
-        ambient=[0.1, 0.1, 0.1],
-        specular=[1.0, 1.0, 1.0],
-        glossiness=100.0
+    # triangle4を追加（PBRMaterialを使用、親はtriangle1）
+    # TODO: metallicRoughness, nomal のテクスチャがどのようにGLTFに格納されるか調査
+    #       現在、metallRoughness の B -> Metallic, G -> Roughtness となる. R -> occlusion ?
+    #       glTF 2.0 spec: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
+    image_1_grid_diffuse = Image.open('./static/TestColorGrid_diffuse.png')
+    image_1_grid_rough   = Image.open('./static/TestColorGrid_rough.png')
+    image_1_grid_normal  = Image.open('./static/TestColorGrid_normal.png')
+    pbr_material_4 = trimesh.visual.material.PBRMaterial(
+        name='pbr_square',
+        baseColorFactor=[1.0, 1.0, 1.0, 1.0],
+        metallicFactor=1.0,
+        roughnessFactor=1.0,
+        baseColorTexture=image_1_grid_diffuse,
+        metallicRoughnessTexture=image_1_grid_rough,
+        normalTexture=image_1_grid_normal,
     )
 
     triangle4 = create_mesh_triangle(
@@ -310,7 +324,7 @@ def example_scene():
             [1, 0],  # 頂点2のUV: 右下
             [1, 1],  # 頂点2のUV: 右上
         ], dtype=np.float32),
-        material=simple_material,
+        material=pbr_material_4,
     )
     add_mesh(scene, triangle4, 'triangle4', position=[0.0, -1.0, 0.0], parent_node=triangle1)
 
