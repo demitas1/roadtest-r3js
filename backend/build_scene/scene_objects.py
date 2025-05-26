@@ -15,31 +15,32 @@ def empty_scene():
     """
     scene = trimesh.Scene()
 
-    # worldジオメトリをシーンに追加
-    world_geom = trimesh.Trimesh(vertices=np.array([]), process=False)
-    world_geom.metadata['name'] = 'world'
-    world_uuid = str(uuid.uuid4())
-    world_geom.metadata['uuid'] = world_uuid
-    scene.add_geometry(world_geom, node_name='world')
+    # root(empty) ジオメトリをシーンに追加
+    # NOTE: trimeshのルートノードは 'world' というノード名のため衝突を避ける必要がある
+    empty_geom = trimesh.Trimesh(vertices=np.array([]), process=False)
+    empty_geom.metadata['name'] = 'scene_root'
+    scene_root_uuid = str(uuid.uuid4())
+    empty_geom.metadata['uuid'] = scene_root_uuid
+    scene.add_geometry(empty_geom, node_name='world_root')
 
     # 親子関係 子uuid -> 親uuid
     custom_hierarchy = {
-        world_uuid: None  # worldは親なし
+        scene_root_uuid: None  # 親なし
     }
 
     # uuid -> 変換行列
     identity = np.eye(4)
     custom_transforms = {
-        world_uuid: identity
+        scene_root_uuid: identity
     }
 
     # UUID->ノードのマッピング
     # trimeshがgeometryにnodeとは異なる名称を付与する場合があるのでトラックする目的
     scene.metadata['uuid_to_node'] = {}
-    scene.metadata['uuid_to_node'][world_uuid] = world_geom
+    scene.metadata['uuid_to_node'][scene_root_uuid] = empty_geom
 
     # シーンのメタデータに保存
-    scene.metadata['root_node'] = world_geom
+    scene.metadata['scene_root_node'] = empty_geom
     scene.metadata['custom_hierarchy'] = custom_hierarchy
     scene.metadata['custom_transforms'] = custom_transforms
 
@@ -49,9 +50,53 @@ def empty_scene():
 def scene_root(scene):
     """
     シーンのルートノードを返す
-    通常は world
+    通常は scene_root_node
     """
-    return scene.metadata.get('root_node', None)
+    return scene.metadata.get('scene_root_node', None)
+
+
+def load_from_gltf_file(gltf_file_path, root_node_name='world', debug=True):
+    """
+    GLTF/GLB ファイルから trimesh シーンを作成する
+    各ノードに metadata, uuid を付与する
+    """
+    # glTF/glb ファイルを読み込む
+    if debug:
+        print(f"gltf file = {gltf_file_path}")
+    scene = trimesh.load(gltf_file_path)
+
+    # trimesh のルートノードを探す
+    # 始点となっているノードを見つける
+    g = scene.graph.to_networkx()
+    start_nodes = [node for node in g.nodes() if g.in_degree(node) == 0]
+    if debug:
+        print(f"scene.graph.geometry_nodes: {scene.graph.geometry_nodes}")
+        print(f"scene.graph.nodes: {scene.graph.nodes}")
+        print(f"scene.graph.nodes_geometry: {scene.graph.nodes_geometry}")
+        print(f" start nodes: {start_nodes}")
+
+    root_node = None
+    for node in start_nodes:
+        if node == root_node_name:
+            root_node = node
+            break
+    # エラー: 指定した名前のルートノードがない
+    if root_node is None:
+        return None
+
+    # TODO: trimesh ルートノードの直接の子となっているノードを探索しシーンのルート候補とする
+    edges = scene.graph.to_edgelist()
+    for edge in edges:
+        parent, child, *rest = edge
+        metadata = rest[0] if rest else None
+        print(f" parent: {parent}, child: {child}")
+
+    # TODO:すべてのノードを探索し、uuid, metadata を付与する
+
+    if debug:
+        print(f" root node = {root_node}")
+
+    return scene
 
 
 def add_mesh(
@@ -70,7 +115,7 @@ def add_mesh(
         mesh (trimesh.Trimesh): メッシュ
         name (str, optional): メッシュの名前(元の名前を上書きする場合に使用)
         position (list, optional): [x, y, z]の位置。Noneの場合は[0, 0, 0]
-        parent_node (trimesh.Trimesh, optional): 親ノード。Noneの場合は'world'
+        parent_node (trimesh.Trimesh, optional): 親ノード。Noneの場合は scene_root
 
     Returns:
         trimesh.Scene: 更新されたシーン
