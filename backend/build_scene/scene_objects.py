@@ -52,10 +52,137 @@ def scene_root(scene):
     シーンのルートノードを返す
     通常は scene_root_node
     """
-    return scene.metadata.get('scene_root_node', None)
+    # ルートノードがすでに設定されている場合はそれを返す
+    root_node = scene.metadata.get('scene_root_node', None)
+    if root_node:
+        return root_node
+
+    # uuidの親子辞書を使って, trimesh のルートノードを探す
+    uuid_to_node = scene.metadata['uuid_to_node']
+    custom_hierarchy = scene.metadata['custom_hierarchy']
+
+    # 親がないノード、または自分自身が親となっているノードを見つける
+    uuid_root_nodes = []
+    for geom_key, geom in scene.geometry.items():
+        geom_uuid = geom.metadata['uuid']
+        parent_uuid = custom_hierarchy.get(geom_uuid, None)
+        if parent_uuid is None or geom_uuid == parent_uuid:
+            if geom_uuid not in uuid_root_nodes:
+                uuid_root_nodes.append(geom_uuid)
+    print(f" root geometry uuid: {uuid_root_nodes}")
+
+    uuid_root_node = None
+    if len(uuid_root_nodes) == 0:
+        return None  # エラー (通常発生しないはず)
+    elif len(uuid_root_nodes) == 1:
+        uuid_root_node = uuid_root_nodes[0]
+    else:
+        # 複数あった場合は、'world'をルートとする
+        for geom_uuid in uuid_root_nodes:
+            geom = uuid_to_node[geom_uuid]
+            print(f" uuid: {geom_uuid}: name: {geom.metadata['name']}")
+
+    # 新たに見つけたルートノードを設定する
+    root_geometry = uuid_to_node[uuid_root_node]
+    root_geometry_name = root_geometry.metadata['name']
+    root_node = scene.graph.geometry_nodes[root_geometry_name]
+    print(f" uuid:{uuid_root_node}, geoemtry:{root_geometry_name}, node:{root_node}")
+    scene.metadata['scene_root_node'] = root_node
+
+    return root_node
 
 
-def load_from_gltf_file(gltf_file_path, root_node_name='world', debug=True):
+def get_geometry_from_node(scene, node_name):
+    # ノードがジオメトリを持つかチェック
+    if node_name in scene.graph.nodes_geometry:
+        # scene.graph.get() でノードの変換行列とジオメトリ名を取得
+        transform, geometry_name = scene.graph.get(node_name)
+        return transform, geometry_name
+    return None, None
+
+
+def add_empty_geometry_to_nodes(scene, debug=False):
+    pass
+    """
+    ジオメトリを持たないノードに空のジオメトリを付加する関数
+
+    Args:
+        scene: trimesh.Scene オブジェクト
+        debug: デバッグ情報を出力するかどうか
+    """
+    # scene 既存のメタデータを取得
+    uuid_to_node = scene.metadata.get('uuid_to_node', {})
+
+    for node_name in scene.graph.nodes:
+        transform, geometry_name = get_geometry_from_node(scene, node_name)
+        if geometry_name is None:
+            # 空のジオメトリを作成
+            empty_geom = trimesh.Trimesh(vertices=np.array([]), process=False)
+
+            # uuid を付加
+            geom_uuid = str(uuid.uuid4())
+            empty_geom.metadata['uuid'] = geom_uuid
+
+            geometry_name = f"empty:{node_name}:{geom_uuid}"  # geometry_name を一意にする
+            empty_geom.metadata['name'] = geometry_name
+
+            # 既存のノードの変換行列を取得
+            try:
+                transform = scene.graph.get(node_name)[0]
+            except:
+                transform = np.eye(4)  # デフォルトの単位行列
+
+            # 空のジオメトリをシーンに追加（既存のノード名を再利用）
+            # 注意: ノードの辞書が更新されないように既存のノードを同名で上書きする
+            scene.add_geometry(empty_geom, node_name=node_name, transform=transform)
+            if debug:
+                print(f"ノード '{node_name}' に空のジオメトリ {geometry_name} を追加しました")
+            geom = empty_geom
+        else:
+            # ジオメトリに uuid を付加
+            geom = scene.geometry.get(geometry_name)
+            geom_uuid = str(uuid.uuid4())
+            geom.metadata['uuid'] = geom_uuid
+
+
+        # シーン内の uuid:geometry 辞書に追加
+        uuid_to_node[geom_uuid] = geom
+
+    # uuid:geometry 辞書を更新
+    scene.metadata['uuid_to_node'] = uuid_to_node
+    return scene
+
+
+def update_scene_metadata(scene, debug=False):
+    # scene 既存のメタデータを取得
+    custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
+    custom_transforms = scene.metadata.get('custom_transforms', {})
+
+    # 親子関係の探索
+    edges = scene.graph.to_edgelist()
+    for edge in edges:
+        parent_node = edge[0]
+        child_node = edge[1]
+        transform_parent, parent_geom = get_geometry_from_node(scene, parent_node)
+        transform_child, child_geom = get_geometry_from_node(scene, child_node)
+        if parent_geom is not None and child_geom is not None:
+            parent_geometry = scene.geometry.get(parent_geom)
+            child_geometry = scene.geometry.get(child_geom)
+
+            parent_uuid = parent_geometry.metadata.get('uuid', None)
+            child_uuid = child_geometry.metadata.get('uuid', None)
+            if parent_uuid is not None and child_uuid is not None:
+                custom_transforms[parent_uuid] = transform_parent
+                custom_transforms[child_uuid] = transform_child
+                custom_hierarchy[child_uuid] = parent_uuid
+
+    # 親子関係と変換を更新
+    scene.metadata['custom_hierarchy'] = custom_hierarchy
+    scene.metadata['custom_transforms'] = custom_transforms
+    return scene
+
+
+def load_from_gltf_file(gltf_file_path, world_node_name='world', debug=True):
     """
     GLTF/GLB ファイルから trimesh シーンを作成する
     各ノードに metadata, uuid を付与する
@@ -65,38 +192,40 @@ def load_from_gltf_file(gltf_file_path, root_node_name='world', debug=True):
         print(f"gltf file = {gltf_file_path}")
     scene = trimesh.load(gltf_file_path)
 
-    # trimesh のルートノードを探す
-    # 始点となっているノードを見つける
-    g = scene.graph.to_networkx()
-    start_nodes = [node for node in g.nodes() if g.in_degree(node) == 0]
     if debug:
-        print(f"scene.graph.geometry_nodes: {scene.graph.geometry_nodes}")
-        print(f"scene.graph.nodes: {scene.graph.nodes}")
-        print(f"scene.graph.nodes_geometry: {scene.graph.nodes_geometry}")
-        print(f" start nodes: {start_nodes}")
+        print("=== empty 付加処理前の状態 ===")
+        print(f"scene.graph.nodes: {list(scene.graph.nodes)}")
+        print(f"scene.graph.nodes_geometry: {list(scene.graph.nodes_geometry)}")
+        print(f"scene.graph.goemtry_nodes: {list(scene.graph.geometry_nodes)}")
 
-    root_node = None
-    for node in start_nodes:
-        if node == root_node_name:
-            root_node = node
-            break
-    # エラー: 指定した名前のルートノードがない
-    if root_node is None:
-        return None
-
-    # TODO: trimesh ルートノードの直接の子となっているノードを探索しシーンのルート候補とする
-    edges = scene.graph.to_edgelist()
-    for edge in edges:
-        parent, child, *rest = edge
-        metadata = rest[0] if rest else None
-        print(f" parent: {parent}, child: {child}")
-
-    # TODO:すべてのノードを探索し、uuid, metadata を付与する
+    # ジオメトリを持たないノードに空のジオメトリを追加
+    # NOTE: glTFからロードした場合、world, scene_root には geometry が存在しない
+    scene = add_empty_geometry_to_nodes(scene, debug=debug)
+    # 全ノードに uuid を付与し、シーン内の親子関係を更新
+    scene = update_scene_metadata(scene, debug=debug)
 
     if debug:
-        print(f" root node = {root_node}")
+        print("=== empty 付加処理後の状態 ===")
+        print(f"scene.graph.nodes: {list(scene.graph.nodes)}")
+        print(f"scene.graph.nodes_geometry: {list(scene.graph.nodes_geometry)}")
+        print(f"scene.graph.goemtry_nodes: {list(scene.graph.geometry_nodes)}")
+
+    # ルートノードを見つけて設定する
+    root_node = scene_root(scene)
 
     return scene
+
+# TODO: add_mesh() のような add_group() 関数を作成する. 子ノード含めて追加
+# TODO: scene, group, node (geometry, structure_node) の関係を整理
+
+# TODO: scene_root() によって world, もしくは scene_root を返すように設計する
+# NOTE: import の動作:
+#       対象となる parent ノードを指定、その child に新規の empty ジオメトリを追加して scene_root 以下を移植する
+#       (world)-(scene0_root)-(parent) <- (world)-(scene_root)-children (or (world)-children)
+#       =>
+#       (world)-(scene0_root)-(parent)-[empty]-children
+#
+#       インポートした後、empty の transform を操作することで children 全体を操作できるようにしたい
 
 
 def add_mesh(
