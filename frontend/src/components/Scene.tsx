@@ -349,17 +349,26 @@ const Scene = (sceneProps: SceneProps) => {
 
     // collect objects in the GLTF
     model.traverse((object) => {
+      // GLTFの元データから名前を取得
+      const originalName = object.userData?.name || object.name;
+      console.log(`Original name: ${originalName}, Three.js name: ${object.name}`);
+
       if (object.name) {
         console.log(`gltf: object: ${object.name}`)
       }
       if (object instanceof THREE.Mesh) {
+        // glTF内の元の名前
+        const meshName = originalName || object.name;
+        meshesRef.current.set(meshName, object);
+
+        // ThreeJSが変更した名前
         meshesRef.current.set(object.name, object)
-        console.log(`gltf: mesh: ${object.name}`)
+        console.log(`gltf: mesh: ${meshName}`)
 
         let materialName = '';
         if (Array.isArray(object.material)) {
           object.material.forEach((mat, index) => {
-            const matName = `${object.name}_material_${index}`;
+            const matName = `${meshName}_material_${index}`;
             materialsRef.current.set(matName, mat)
             console.log(`material: ${matName}`)
             
@@ -369,7 +378,7 @@ const Scene = (sceneProps: SceneProps) => {
             if (index === 0) materialName = matName;
           })
         } else {
-          const matName = `${object.name}_material`;
+          const matName = `${meshName}_material`;
           materialsRef.current.set(matName, object.material)
           console.log(`material: ${matName}`)
           
@@ -396,7 +405,7 @@ const Scene = (sceneProps: SceneProps) => {
         }
 
         loadedMeshInfos.push({
-          name: object.name,
+          name: meshName,
           materialName,
           position: object.position.clone(),
           rotation: object.rotation.clone(),
