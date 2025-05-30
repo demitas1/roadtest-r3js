@@ -2,8 +2,47 @@ import trimesh
 import numpy as np
 from PIL import Image
 import uuid
+import re
 
 from .utils import compose_transform_matrix
+
+
+def generate_unique_name(base_name, existing_names):
+    """
+    基本名から一意な名前を生成する（Blender方式）
+
+    Args:
+        base_name: 基本となる名前
+        existing_names: 既存の名前のセット
+
+    Returns:
+        str: 一意な名前
+    """
+    if base_name not in existing_names:
+        return base_name
+
+    # 既存の枝番号を解析して最大値を見つける
+    pattern = re.escape(base_name) + r'\.(\d{3})$'
+    max_number = 0
+
+    for existing_name in existing_names:
+        match = re.match(pattern, existing_name)
+        if match:
+            number = int(match.group(1))
+            max_number = max(max_number, number)
+
+    # 次の番号を生成（001, 002, ... 形式）
+    next_number = max_number + 1
+    return f"{base_name}.{next_number:03d}"
+
+
+def get_geometry_from_node(scene, node_name):
+    # ノードがあるかチェック
+    if node_name in scene.graph.nodes:
+        # scene.graph.get() でノードの変換行列とジオメトリ名を取得
+        transform, geometry_name = scene.graph.get(node_name)
+        return transform, geometry_name
+    return None, None
 
 
 def empty_scene():
@@ -21,7 +60,7 @@ def empty_scene():
     empty_geom.metadata['name'] = 'scene_root'
     scene_root_uuid = str(uuid.uuid4())
     empty_geom.metadata['uuid'] = scene_root_uuid
-    scene.add_geometry(empty_geom, node_name='world_root')
+    scene.add_geometry(empty_geom, node_name='scene_root')
 
     # 親子関係 子uuid -> 親uuid
     custom_hierarchy = {
@@ -92,17 +131,7 @@ def scene_root(scene):
     return root_node
 
 
-def get_geometry_from_node(scene, node_name):
-    # ノードがジオメトリを持つかチェック
-    if node_name in scene.graph.nodes_geometry:
-        # scene.graph.get() でノードの変換行列とジオメトリ名を取得
-        transform, geometry_name = scene.graph.get(node_name)
-        return transform, geometry_name
-    return None, None
-
-
 def add_empty_geometry_to_nodes(scene, debug=False):
-    pass
     """
     ジオメトリを持たないノードに空のジオメトリを付加する関数
 
@@ -123,7 +152,8 @@ def add_empty_geometry_to_nodes(scene, debug=False):
             geom_uuid = str(uuid.uuid4())
             empty_geom.metadata['uuid'] = geom_uuid
 
-            geometry_name = f"empty:{node_name}:{geom_uuid}"  # geometry_name を一意にする
+            # node_name を元に, geometry_name を付与
+            geometry_name = generate_unique_name(node_name, scene.geometry.keys())
             empty_geom.metadata['name'] = geometry_name
 
             # 既存のノードの変換行列を取得
@@ -143,7 +173,6 @@ def add_empty_geometry_to_nodes(scene, debug=False):
             geom = scene.geometry.get(geometry_name)
             geom_uuid = str(uuid.uuid4())
             geom.metadata['uuid'] = geom_uuid
-
 
         # シーン内の uuid:geometry 辞書に追加
         uuid_to_node[geom_uuid] = geom
@@ -215,10 +244,65 @@ def load_from_gltf_file(gltf_file_path, world_node_name='world', debug=True):
 
     return scene
 
-# TODO: add_mesh() のような add_group() 関数を作成する. 子ノード含めて追加
-# TODO: scene, group, node (geometry, structure_node) の関係を整理
 
-# TODO: scene_root() によって world, もしくは scene_root を返すように設計する
+def get_node_subtree(scene, node_name):
+    """
+    指定されたノードとその子孫ノードの情報を取得
+
+    Args:
+        scene: trimesh Scene オブジェクト
+        node_name: ルートとなるノード名
+
+    Returns:
+        dict: ノード情報（ノード、ジオメトリ、変換行列、子ノード）
+    """
+    if node_name not in scene.graph.nodes:
+        return None
+
+    # エッジリストを取得
+    edges = scene.graph.to_edgelist()
+
+    def get_children(node):
+        """指定されたノードの子ノードを取得"""
+        children = []
+        for edge in edges:
+            if len(edge) >= 2 and edge[0] == node and edge[0] != edge[1]:
+                children.append(edge[1])
+        return children
+
+    def collect_subtree(current_node):
+        """
+        再帰的にサブツリーを収集
+        """
+        node_info = {
+            'node_name': current_node,
+            'transform': None,
+            'geometry_name': None,
+            'geometry': None,
+            'children': []
+        }
+
+        # ジオメトリ情報を取得
+        transform, geometry_name = get_geometry_from_node(scene, current_node)
+        node_info['transform'] = transform
+        if geometry_name is not None:
+            if geometry_name in scene.geometry:
+                node_info['geometry_name'] = geometry_name
+                node_info['geometry'] = scene.geometry[geometry_name]
+
+        # 子ノードを再帰的に処理
+        children = get_children(current_node)
+        for child in children:
+            child_info = collect_subtree(child)
+            if child_info:
+                node_info['children'].append(child_info)
+
+        return node_info
+
+    return collect_subtree(node_name)
+
+
+# TODO: scene, group, node (geometry, structure_node) の関係を整理
 # NOTE: import の動作:
 #       対象となる parent ノードを指定、その child に新規の empty ジオメトリを追加して scene_root 以下を移植する
 #       (world)-(scene0_root)-(parent) <- (world)-(scene_root)-children (or (world)-children)
@@ -226,62 +310,163 @@ def load_from_gltf_file(gltf_file_path, world_node_name='world', debug=True):
 #       (world)-(scene0_root)-(parent)-[empty]-children
 #
 #       インポートした後、empty の transform を操作することで children 全体を操作できるようにしたい
+def add_subtree(target_scene, target_parent_geometry_name, subtree):
+    """
+    サブツリーをターゲットシーンに追加
+
+    Args:
+        target_scene: 追加先のシーン
+        target_parent_node: 親ノード名
+        subtree: 追加するサブツリー情報
+
+    Returns:
+        str: 追加されたルートノードの名前
+    """
+    # ノード名を生成（重複回避）
+    original_node_name = subtree['node_name']
+    original_geometry_name = subtree['geometry_name']
+
+    # 変換行列を用意
+    transform = subtree['transform']
+    if transform is None:
+        transform = np.eye(4, dtype=np.float64)
+
+    # ジオメトリを追加
+    geometry_to_add = subtree['geometry']
+    if geometry_to_add is None:
+        # ジオメトリなしのノードの場合、empty メッシュを作成
+        geometry_to_add = trimesh.Trimesh(vertices=np.array([]), process=False)
+
+    # target_parent_geometry の存在を確認
+    target_parent_geometry = target_scene.geometry.get(target_parent_geometry_name, None)
+    if target_parent_geometry is None:
+        print(f"Error: failed to find parent geometry:{target_parent_geometry_name}.")
+        return None
+
+    # シーンに追加
+    new_node_name = add_mesh(
+            target_scene,
+            geometry_to_add,
+            node_name=original_node_name,
+            geometry_name=original_geometry_name,
+            transform=transform,
+            parent_geometry=target_parent_geometry,
+            clone=True)
+
+    # ノードとジオメトリが追加されたことを確認する
+    if new_node_name is None:
+        print(f"Error: failed to add new node {original_node_name}:{original_geometry_name}.")
+        return None
+
+    _, new_geometry_name = get_geometry_from_node(target_scene, new_node_name)
+    if new_geometry_name is None:
+        print(f"Error: failed to add new node {original_node_name}:{original_geometry_name}.")
+        return None
+
+    # 子ノードを再帰的に追加
+    for child_info in subtree['children']:
+        add_subtree(target_scene, new_geometry_name, child_info)
+
+    return new_node_name
 
 
+# TODO: 返り値が適切か再考. sceneは不要. 実際に付与されたメッシュに関する情報の方が重要.
 def add_mesh(
         scene,
-        mesh,
-        name=None,
+        mesh_to_add,
+        node_name=None,
+        geometry_name=None,
+        transform=None,
         position=None,
         rotation=None,
         scale=None,
-        parent_node=None):
+        parent_geometry=None,
+        clone=True):
     """
     trimesh メッシュをシーンに追加する
 
     Args:
         scene (trimesh.Scene): メッシュを追加するシーン
         mesh (trimesh.Trimesh): メッシュ
-        name (str, optional): メッシュの名前(元の名前を上書きする場合に使用)
+        node_name (str, optional): シーングラフ内の node の名前 (デフォルト: geometry の名前を使用)
+        geometry_name (str, optional): mesh geometry の名前 (元の名前を上書きする場合に使用)
+        transform (np.array): 4x4 numpy行列. transformを指定した場合は position, rotation, scale は無視される
         position (list, optional): [x, y, z]の位置。Noneの場合は[0, 0, 0]
-        parent_node (trimesh.Trimesh, optional): 親ノード。Noneの場合は scene_root
+        rotation (list, optional): 回転クォータニオン [x, y, z, w]
+        scale (list, optional): スケール [x, y, z]
+        parent_geometry (trimesh.Trimesh, optional): 親ノードのジオメトリ。Noneの場合は scene_root
+        clone (boolean): mesh を clone してからシーンに追加する.
 
     Returns:
-        trimesh.Scene: 更新されたシーン
+        str: 追加されたノードの名称
     """
-    # デフォルト値の設定
-    if position is None:
-        position = [0, 0, 0]
+    # 追加先シーンの uuid:geometry 辞書
+    uuid_to_node = scene.metadata.get('uuid_to_node', {})
 
-    if parent_node is None:
-        parent_node = scene_root(scene)
-    parent_node_uuid = parent_node.metadata['uuid']
+    # 親ノードが無指定の場合シーンのルートノードを親とする
+    if parent_geometry is None:
+        parent_geometry = scene_root(scene)
+    parent_node_uuid = parent_geometry.metadata['uuid']
 
-    # metadata
-    if name is not None:
-        # 元の名前を上書き
-        node_name = name
-        mesh.metadata['name'] = name
+    # 親ノードが追加先シーンにない場合、警告を出しルートノードを親とする
+    if parent_node_uuid not in uuid_to_node:
+        print(f"Warning: parent node uuid {parent_node_uuid} not in the scene.")
+        parent_geometry = scene_root(scene)
+        parent_node_uuid = parent_geometry.metadata['uuid']
+
+    # 親ノードのジオメトリ名、ノード名を取得
+    parent_geometry_name = parent_geometry.metadata['name']
+    # TODO: trimeshでは一つのジオメトリが複数のノードで共有される場合があるが、ここでは1:1対応であることを強制する
+    parent_nodes = scene.graph.geometry_nodes[parent_geometry_name]
+    parent_node_name = parent_nodes[0]
+    print(f" add_mesh: parent node:geometry = {parent_node_name}:{parent_geometry_name}")
+
+    # Trimesh.copy() をつかってクローンを add する
+    if clone:
+        mesh = mesh_to_add.copy()
     else:
-        # metadata内の名前を使用する
-        node_name = mesh.metadata.get('name', None)
+        mesh = mesh_to_add
 
-    # UUIDを付与してmeshに追加
+    # UUID を追加する mesh に付与
     if 'uuid' not in mesh.metadata:
         mesh_uuid = str(uuid.uuid4())
         mesh.metadata['uuid'] = mesh_uuid
     mesh_uuid = mesh.metadata['uuid']
 
-    # シーンにmeshを追加
-    # TODO: metadataに辞書があることを保証できるようにする
-    scene.add_geometry(mesh, node_name=node_name)
-    scene.metadata['uuid_to_node'][mesh_uuid] = mesh
+    # geometry name
+    if geometry_name is None:
+        # 無指定の場合 metadata の名前を使用する
+        geometry_name = mesh.metadata.get('name', None)
+    # 追加先のシーン内に重複がある場合, 別名を与える
+    geometry_unique_name = generate_unique_name(geometry_name, scene.geometry.keys())
+    mesh.metadata['name'] = geometry_unique_name
+
+    # node name
+    if node_name is None:
+        node_name = geometry_unique_name
+    # 追加先のシーン内に重複がある場合, 別名を与える
+    node_unique_name = generate_unique_name(node_name, scene.graph.nodes)
 
     # 変換行列を準備
-    transform = compose_transform_matrix(
-        translation=position,
-        rotation=rotation,
-        scale=scale)
+    # TODO: transform引数の型チェック. 不正な場合は単位行列をセットする.
+    if transform is None:
+        transform = compose_transform_matrix(
+            translation=position,
+            rotation=rotation,
+            scale=scale)
+
+    # シーンにmeshを追加
+    # TODO: 戻り値をチェック. None ならエラー
+    new_node = scene.add_geometry(
+        mesh,
+        node_name=node_unique_name,
+        geom_name=geometry_unique_name,
+        transform=transform,
+        parent_node_name=parent_node_name)
+
+    # uuid:gemetry 辞書を更新
+    uuid_to_node[mesh_uuid] = mesh
+    scene.metadata['uuid_to_node'] = uuid_to_node
 
     # 既存のメタデータを取得
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
@@ -295,7 +480,8 @@ def add_mesh(
     scene.metadata['custom_hierarchy'] = custom_hierarchy
     scene.metadata['custom_transforms'] = custom_transforms
 
-    return scene
+    # 実際に付与された名前の情報を返す
+    return new_node
 
 
 def create_mesh_triangle(
@@ -372,7 +558,9 @@ def create_mesh_triangle(
     return mesh
 
 
-def example_scene():
+# TODO: asset_root_path を別関数で処理
+
+def example_scene(asset_root_path='./static/'):
     """
     trimeshを使ってシーングラフを構築する（リファクタリング後のバージョン）
 
@@ -403,9 +591,9 @@ def example_scene():
             [1, 0],  # 頂点2のUV: 右下
             [1, 1],  # 頂点2のUV: 右上
         ], dtype=np.float32),
-        texture_path='./static/TestColorGrid.png',
+        texture_path=asset_root_path + 'TestColorGrid.png',
     )
-    add_mesh(scene, triangle1, name='triangle1', position=[0, 0, 0], parent_node=None)
+    add_mesh(scene, triangle1, position=[0, 0, 0], parent_geometry=None)
 
     # triangle2を追加（親はtriangle1）
     triangle2 = create_mesh_triangle(
@@ -426,12 +614,12 @@ def example_scene():
             [1, 0],  # 頂点2のUV: 右下
             [1, 1],  # 頂点2のUV: 右上
         ], dtype=np.float32),
-        texture_path='./static/TestPicture.png',
+        texture_path=asset_root_path + 'TestPicture.png',
     )
-    add_mesh(scene, triangle2, 'triangle2', position=[1.0, 1.0, 0.0], parent_node=triangle1)
+    add_mesh(scene, triangle2, position=[1.0, 1.0, 0.0], parent_geometry=triangle1)
 
     # triangle3を追加（PBRMaterialを使用、親はtriangle1）
-    image_basecolor_1 = Image.open('./static/TestPicture.png')
+    image_basecolor_1 = Image.open(asset_root_path + 'TestPicture.png')
 
     pbr_material_3 = trimesh.visual.material.PBRMaterial(
         name='pbr_square',
@@ -442,7 +630,7 @@ def example_scene():
     )
 
     triangle3 = create_mesh_triangle(
-        name='triangle3',
+        name='triangle2',
         vertices = np.array([
             [0, 0, 0],  # 頂点0
             [0, 1, 0],  # 頂点1
@@ -461,15 +649,15 @@ def example_scene():
         ], dtype=np.float32),
         material=pbr_material_3,
     )
-    add_mesh(scene, triangle3, 'triangle3', position=[-1.0, 1.0, 0.0], parent_node=triangle1)
+    add_mesh(scene, triangle3, position=[-1.0, 1.0, 0.0], parent_geometry=triangle1)
 
     # triangle4を追加（PBRMaterialを使用、親はtriangle1）
     # TODO: metallicRoughness, nomal のテクスチャがどのようにGLTFに格納されるか調査
     #       現在、metallRoughness の B -> Metallic, G -> Roughtness となる. R -> occlusion ?
     #       glTF 2.0 spec: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#metallic-roughness-material
-    image_1_grid_diffuse = Image.open('./static/TestColorGrid_diffuse.png')
-    image_1_grid_rough   = Image.open('./static/TestColorGrid_rough.png')
-    image_1_grid_normal  = Image.open('./static/TestColorGrid_normal.png')
+    image_1_grid_diffuse = Image.open(asset_root_path + 'TestColorGrid_diffuse.png')
+    image_1_grid_rough   = Image.open(asset_root_path + 'TestColorGrid_rough.png')
+    image_1_grid_normal  = Image.open(asset_root_path + 'TestColorGrid_normal.png')
     pbr_material_4 = trimesh.visual.material.PBRMaterial(
         name='pbr_square',
         baseColorFactor=[1.0, 1.0, 1.0, 1.0],
@@ -481,7 +669,7 @@ def example_scene():
     )
 
     triangle4 = create_mesh_triangle(
-        name='triangle4',
+        name='triangle2',
         vertices = np.array([
             [0, 0, 0],  # 頂点0
             [0, 1, 0],  # 頂点1
@@ -500,7 +688,7 @@ def example_scene():
         ], dtype=np.float32),
         material=pbr_material_4,
     )
-    add_mesh(scene, triangle4, 'triangle4', position=[0.0, -1.0, 0.0], parent_node=triangle1)
+    add_mesh(scene, triangle4, position=[0.0, -1.0, 0.0], parent_geometry=triangle1)
 
     custom_hierarchy = scene.metadata.get('custom_hierarchy', {})
     custom_transforms = scene.metadata.get('custom_transforms', {})

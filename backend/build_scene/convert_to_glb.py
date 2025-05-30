@@ -210,6 +210,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
             dict_uuid_to_node,
             custom_transforms,
             custom_hierarchy,
+            debug=False,
         )
 
         return {
@@ -226,6 +227,7 @@ def convert_to_glb(scene, output_path="./static/output.glb", debug=True):
         custom_transforms,
         custom_hierarchy,
         texture_images,
+        debug=False,
     )
 
     return {

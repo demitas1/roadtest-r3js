@@ -53,7 +53,7 @@ def write_gltf_json(
         result = decompose_transform_matrix(transform)
         if not result['success']:
             msg = result['error']
-            print(f"{node_uuid}: {msg}")
+            print(f"Error: {node_uuid}: {msg}")
         translation = result['translation']
         rotation = result['rotation']
         scale = result['scale']
@@ -181,7 +181,6 @@ def write_gltf_binary(
         "emissiveTexture",
     ]
 
-    print(f'{len(texture_images.keys())} texture_image:')
     if debug:
         for k in texture_images.keys():
             print(f'texture key: {k}')
@@ -226,7 +225,6 @@ def write_gltf_binary(
                 #dummy_texture.save(dummy_buffer, format="PNG")
                 #image_data[k_texture] = dummy_buffer.getvalue()
 
-    print(f'{len(image_data.keys())} image_data:')
     if debug:
         for k in image_data.keys():
             print(f'image_data key: {k}')
@@ -269,7 +267,6 @@ def write_gltf_binary(
                 buffer_data.extend(image_data[k_texture])
                 current_offset += len(image_data[k_texture])
 
-    print(f'{len(offsets.keys())} offsets:')
     if debug:
         for k in offsets.keys():
             print(f'offset key: {k}')
@@ -419,7 +416,6 @@ def write_gltf_binary(
         # baseColorFactor
         if hasattr(mesh_material, 'baseColorFactor') and mesh_material.baseColorFactor is not None:
             f = (mesh_material.baseColorFactor / 255.0).tolist()
-            print(f'baseColorFactor {f}')
             pbr_metallic_roughness.baseColorFactor = f
         else:
             pbr_metallic_roughness.baseColorFactor = [1.0, 1.0, 1.0, 1.0]  # default value
@@ -524,11 +520,13 @@ def write_gltf_binary(
     node_index = 0
 
     # メッシュと構造ノードの辞書を結合する
-    print(f'meshes: {meshes.keys()}')
-    print(f'structure_nodes: {structure_nodes.keys()}')
-    duplicate_keys = set(meshes.keys()) & set(structure_nodes.keys())
-    if duplicate_keys:
-        print(f"duplicate between mesh and structure node dict: {duplicate_keys}")
+    if debug:
+        print(f'meshes: {meshes.keys()}')
+        print(f'structure_nodes: {structure_nodes.keys()}')
+
+        duplicate_keys = set(meshes.keys()) & set(structure_nodes.keys())
+        if duplicate_keys:
+            print(f"Warning: duplicate between mesh and structure node dict: {duplicate_keys}")
     valid_nodes = {**meshes, **structure_nodes}
 
     # シーングラフを走査してノード構造を作成
@@ -557,7 +555,7 @@ def write_gltf_binary(
         result = decompose_transform_matrix(transform)
         if not result['success']:
             msg = result['error']
-            print(f"{node_uuid}: {msg}")
+            print(f"Error: {node_uuid}: {msg}")
         translation = result['translation']
         rotation = result['rotation']
         scale = result['scale']
